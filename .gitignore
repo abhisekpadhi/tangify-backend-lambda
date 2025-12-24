@@ -1,0 +1,27 @@
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Go build artifacts
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go modules
+vendor/
+
+# SAM / Lambda build artifacts
+.aws-sam/
+aws-sam-cli-managed-default/
+
+# Logs
+*.log
+
+

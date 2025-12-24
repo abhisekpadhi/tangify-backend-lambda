@@ -1,0 +1,53 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  tangify-backend-lambda
+  SAM template for Lambda Go function exposed via Lambda Function URL (no API Gateway)
+
+Parameters:
+  LambdaExecutionRoleArn:
+    Type: String
+    Description: ARN of the IAM role for Lambda execution (created via Terraform)
+    Default: arn:aws:iam::577638384550:role/tangify-backend-lambda-role
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 30
+
+Resources:
+  TangifyBackendLambda:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      FunctionName: tangify-backend-lambda
+      CodeUri: api/
+      Handler: main
+      Runtime: provided.al2023
+      Architectures:
+        - x86_64
+      Role: !Ref LambdaExecutionRoleArn
+      Tracing: Active # https://docs.aws.amazon.com/lambda/latest/dg/lambda-x-ray.html
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins:
+            - "*"
+          AllowMethods:
+            - GET
+            - POST
+          AllowHeaders:
+            - "*"
+      Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
+        Variables:
+          PARAM1: VALUE
+
+Outputs:
+  TangifyBackendLambda:
+    Description: "Lambda Function ARN for tangify-backend-lambda"
+    Value: !GetAtt TangifyBackendLambda.Arn
+  TangifyBackendLambdaIamRole:
+    Description: "IAM Role ARN used by tangify-backend-lambda function (created via Terraform)"
+    Value: !Ref LambdaExecutionRoleArn
+  TangifyBackendLambdaUrl:
+    Description: "Lambda Function URL for tangify-backend-lambda"
+    Value: !GetAtt TangifyBackendLambdaUrl.FunctionUrl
