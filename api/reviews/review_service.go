@@ -14,14 +14,13 @@ import (
 
 const (
 	openRouterURL   = "https://openrouter.ai/api/v1/chat/completions"
-	openRouterModel = "openrouter/free"
-	reviewCount     = 3
+	openRouterModel = "openai/gpt-oss-120b:free"
 )
 
 var (
 	errRatingOutOfRange = errors.New("rating must be between 1 and 5")
 	errMissingAPIKey    = errors.New("LLM API key not configured")
-	errEmptyReview      = errors.New("LLM returned empty reviews")
+	errEmptyReview      = errors.New("LLM returned empty review")
 )
 
 type openRouterRequest struct {
@@ -53,11 +52,11 @@ type Service struct {
 func NewService(apiKey string) *Service {
 	return &Service{
 		apiKey: strings.TrimSpace(apiKey),
-		client: &http.Client{Timeout: 35 * time.Second},
+		client: &http.Client{Timeout: 28 * time.Second},
 	}
 }
 
-func (s *Service) Generate(ctx context.Context, req GenerateReviewRequest) (*GenerateReviewResponse, error) {
+func (s *Service) Generate(ctx context.Context, req GenerateReviewRequest, menuItemNames []string) (*GenerateReviewResponse, error) {
 	if req.Rating < 1 || req.Rating > 5 {
 		return nil, errRatingOutOfRange
 	}
@@ -65,13 +64,13 @@ func (s *Service) Generate(ctx context.Context, req GenerateReviewRequest) (*Gen
 		return nil, errMissingAPIKey
 	}
 
-	prompt := buildPrompt(req.Rating)
+	prompt := buildPrompt(req.Rating, menuItemNames)
 	body, err := json.Marshal(openRouterRequest{
 		Model: openRouterModel,
 		Messages: []openRouterMessage{
 			{
 				Role:    "system",
-				Content: "You write casual restaurant reviews that sound like real customers from Odisha. Reply with only valid JSON.",
+				Content: "You write casual restaurant reviews that sound like real customers from Odisha. Reply with only the review text, no quotes or labels.",
 			},
 			{Role: "user", Content: prompt},
 		},
@@ -113,50 +112,16 @@ func (s *Service) Generate(ctx context.Context, req GenerateReviewRequest) (*Gen
 		return nil, errEmptyReview
 	}
 
-	reviews, err := parseReviewsFromContent(parsed.Choices[0].Message.Content)
-	if err != nil {
-		return nil, err
+	review := strings.TrimSpace(parsed.Choices[0].Message.Content)
+	review = strings.Trim(review, "\"'`")
+	if review == "" {
+		return nil, errEmptyReview
 	}
 
-	return &GenerateReviewResponse{Reviews: reviews}, nil
+	return &GenerateReviewResponse{Review: review}, nil
 }
 
-func parseReviewsFromContent(content string) ([]string, error) {
-	content = strings.TrimSpace(content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	content = strings.TrimSpace(content)
-
-	var reviews []string
-	if err := json.Unmarshal([]byte(content), &reviews); err != nil {
-		return nil, fmt.Errorf("failed to parse reviews JSON: %w", err)
-	}
-
-	cleaned := make([]string, 0, len(reviews))
-	seen := make(map[string]struct{})
-	for _, review := range reviews {
-		review = strings.TrimSpace(review)
-		review = strings.Trim(review, "\"'`")
-		if review == "" {
-			continue
-		}
-		key := strings.ToLower(review)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		cleaned = append(cleaned, review)
-	}
-
-	if len(cleaned) < reviewCount {
-		return nil, fmt.Errorf("%w: got %d unique reviews", errEmptyReview, len(cleaned))
-	}
-
-	return cleaned[:reviewCount], nil
-}
-
-func buildPrompt(rating int) string {
+func buildPrompt(rating int, menuItemNames []string) string {
 	tone := map[int]string{
 		5: "very happy, loved the food and vibe",
 		4: "good experience, mostly happy with food/service",
@@ -165,22 +130,26 @@ func buildPrompt(rating int) string {
 		1: "bad experience, unhappy",
 	}[rating]
 
-	return fmt.Sprintf(`Write exactly 3 different short Google Maps style reviews for Tangify restaurant (Odia food place in Bhubaneswar area).
+	menuSection := "Do not mention any specific dish names — talk about food/service in general only."
+	if len(menuItemNames) > 0 {
+		menuSection = "Menu items Tangify actually serves (if you mention food by name, pick ONLY from this list — never invent dishes not listed here):\n" +
+			strings.Join(menuItemNames, "\n")
+	}
+
+	return fmt.Sprintf(`Write a short Google Maps style review for Tangify restaurant (Odia food place in Bhubaneswar area).
 
 Star rating: %d/5
 Mood: %s
 
-Rules for each review:
+%s
+
+Rules:
 - 1 to 3 short sentences max, under 280 characters if possible
 - Sound like a normal person typing on phone, not polished or marketing
 - Mix Odia and English naturally (romanized Odia is fine), like "bhala lagila", "jaldi serve hela", "next time bhi aasiba"
-- Mention 1-2 specific things casually (food taste, staff, ambience, waiting time, value)
+- Mention 1-2 specific things casually (food taste, staff, ambience, waiting time, value) — make it feel random each time
 - No hashtags, no emojis, no bullet points, no "I rate X stars"
-- Do not mention being an AI
-- All 3 reviews must feel different from each other (different tone, different details)
-
-Return ONLY a JSON array of exactly 3 strings. Example format:
-["review one text", "review two text", "review three text"]`, rating, tone)
+- Do not mention being an AI`, rating, tone, menuSection)
 }
 
 func ErrorStatus(err error) int {

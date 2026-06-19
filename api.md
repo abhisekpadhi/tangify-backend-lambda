@@ -57,7 +57,7 @@ curl -sS "https://EXAMPLE.lambda-url.on.aws/api/v1/menu"
 
 ### `POST /api/v1/reviews/generate`
 
-Generates 3 short, distinct casual customer-style reviews for Tangify using OpenRouter (`openrouter/free`). Requires server env `LLM_API_KEY` (OpenRouter API key).
+Generates a short, casual customer-style review for Tangify using OpenRouter (`openai/gpt-oss-120b:free`). Fetches the live menu from Google Sheets (same env as `GET /api/v1/menu`) and passes ON item names into the prompt so reviews only mention dishes Tangify actually serves. Requires server env `LLM_API_KEY` (OpenRouter API key).
 
 **Request body:**
 
@@ -71,11 +71,7 @@ Generates 3 short, distinct casual customer-style reviews for Tangify using Open
 
 ```json
 {
-  "reviews": [
-    "Aaji lunch re asithili, dalma ta bhala thila. service ta jaldi hela.",
-    "Food quality bhala, staff friendly. waiting time thoda thila but ok.",
-    "Ambience simple but clean. chicken pakoda ta must try, next time bhi aasiba."
-  ]
+  "review": "Aaji lunch re asithili, dalma ta bhala thila. service ta jaldi hela, next time bhi try kariba."
 }
 ```
 

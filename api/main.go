@@ -131,8 +131,22 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 		if err := json.Unmarshal([]byte(request.Body), &body); err != nil {
 			return ApiResponse.BadRequest("Invalid JSON body"), nil
 		}
+
+		menuItemNames := []string{}
+		apiKey := os.Getenv("GOOGLE_SHEETS_API_KEY")
+		sheetID := os.Getenv("GOOGLE_SHEET_ID")
+		sheetName := os.Getenv("GOOGLE_SHEET_NAME")
+		if apiKey != "" && sheetID != "" {
+			items, menuErr := menu.Fetch(ctx, apiKey, sheetID, sheetName)
+			if menuErr != nil {
+				fmt.Println("review generate menu fetch error: ", menuErr)
+			} else {
+				menuItemNames = menu.ActiveItemNames(items)
+			}
+		}
+
 		reviewService := reviews.NewService(os.Getenv("LLM_API_KEY"))
-		data, err := reviewService.Generate(ctx, body)
+		data, err := reviewService.Generate(ctx, body, menuItemNames)
 		if err != nil {
 			fmt.Println("review generate error: ", err)
 			return ApiResponse.Error(reviews.ErrorStatus(err), err.Error()), nil

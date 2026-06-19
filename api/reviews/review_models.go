@@ -5,5 +5,5 @@ type GenerateReviewRequest struct {
 }
 
 type GenerateReviewResponse struct {
-	Reviews []string `json:"reviews"`
+	Review string `json:"review"`
 }
