@@ -141,7 +141,9 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 			if menuErr != nil {
 				fmt.Println("review generate menu fetch error: ", menuErr)
 			} else {
-				menuItemNames = menu.ActiveItemNames(items)
+				menuItemNames = menu.ShuffleStrings(
+					menu.ActiveItemNamesInCategories(items, menu.ReviewContextCategories),
+				)
 			}
 		}
 

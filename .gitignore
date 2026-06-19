@@ -24,5 +24,7 @@ aws-sam-cli-managed-default/
 # Logs
 *.log
 
+# Local Lambda env sync (secrets)
+.env.lambda
 
 node_modules

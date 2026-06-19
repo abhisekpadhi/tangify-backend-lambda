@@ -63,7 +63,10 @@ Set these in Lambda (or local env):
 - `GOOGLE_SHEETS_API_KEY` - required for `GET /api/v1/menu`
 - `GOOGLE_SHEET_ID` - required for `GET /api/v1/menu`
 - `GOOGLE_SHEET_NAME` - optional for `GET /api/v1/menu`
+- `LLM_API_KEY` - required for `POST /api/v1/reviews/generate` (OpenRouter API key)
 - `ABLY_KEY` - optional; if set, backend publishes order events to Ably channels
+
+**Important:** Do not put env vars in `template.yaml` — SAM deploy replaces the whole `Environment` block and wipes console-configured values. `./deploy.sh` runs `scripts/sync-lambda-env.sh` after each deploy using `.env.lambda` (gitignored).
 
 Also ensure SSM contains:
 
@@ -108,9 +111,10 @@ sam local start-api
 
 ## Deploy
 
-Quick deploy script:
+Quick deploy script (builds, deploys, then syncs env vars from `.env.lambda`):
 
 ```bash
+cp .env.lambda.example .env.lambda   # first time only — fill in values
 ./deploy.sh
 ```
 
@@ -118,5 +122,6 @@ Or manually:
 
 ```bash
 sam build
-sam deploy --guided
+sam deploy --no-confirm-changeset
+./scripts/sync-lambda-env.sh
 ```

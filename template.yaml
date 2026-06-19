@@ -13,7 +13,7 @@ Parameters:
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 30
+    Timeout: 300
 
 Resources:
   TangifyBackendLambda:
@@ -37,9 +37,9 @@ Resources:
             - POST
           AllowHeaders:
             - "*"
-      Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
-        Variables:
-          PARAM1: VALUE
+      # Do not define Environment here — CloudFormation replaces the whole block on
+      # deploy and wipes console-configured vars (LLM_API_KEY, Google Sheets, etc.).
+      # Set env vars via AWS console or ./scripts/sync-lambda-env.sh after deploy.
 
 Outputs:
   TangifyBackendLambda:

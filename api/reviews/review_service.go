@@ -52,7 +52,7 @@ type Service struct {
 func NewService(apiKey string) *Service {
 	return &Service{
 		apiKey: strings.TrimSpace(apiKey),
-		client: &http.Client{Timeout: 28 * time.Second},
+		client: &http.Client{Timeout: 285 * time.Second},
 	}
 }
 
