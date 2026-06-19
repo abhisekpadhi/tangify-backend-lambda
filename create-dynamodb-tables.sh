@@ -65,11 +65,13 @@ create_one() {
 create_one "${BILLING_JSON_DIR}" tangify_sessions
 create_one "${BILLING_JSON_DIR}" tangify_orders
 create_one "${BILLING_JSON_DIR}" tangify_bills
+create_one "${BILLING_JSON_DIR}" tangify_bills_with_line_items
 create_one "${USERS_JSON_DIR}" tangify_users
 create_one "${LOYALTY_JSON_DIR}" tangify_points_wallet
+create_one "${LOYALTY_JSON_DIR}" tangify_phone_otp
 
 echo ""
-echo "Done. Tables: tangify_sessions, tangify_orders, tangify_bills, tangify_users, tangify_points_wallet"
+echo "Done. Tables: tangify_sessions, tangify_orders, tangify_bills, tangify_bills_with_line_items, tangify_users, tangify_points_wallet, tangify_phone_otp"
 if [[ -n "${ENDPOINT_URL:-}" ]]; then
   echo "List: aws dynamodb list-tables --endpoint-url \"${ENDPOINT_URL}\" --region ${REGION}"
 else

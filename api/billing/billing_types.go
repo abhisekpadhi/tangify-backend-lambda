@@ -2,9 +2,10 @@ package billing
 
 // DynamoDB table names (see dynamodb/billing-v2/*.json).
 const (
-	TableNameSessions = "tangify_sessions"
-	TableNameOrders   = "tangify_orders"
-	TableNameBills    = "tangify_bills"
+	TableNameSessions           = "tangify_sessions"
+	TableNameOrders             = "tangify_orders"
+	TableNameBills              = "tangify_bills"
+	TableNameBillsWithLineItems = "tangify_bills_with_line_items"
 )
 
 const (
@@ -12,6 +13,7 @@ const (
 	GSISessionOrdered = "GSI_SessionOrdered"
 	GSIVenueOrdered   = "GSI_VenueOrdered"
 	GSISessionBill    = "GSI_SessionBill"
+	GSIStateKey       = "GSI_StateKey"
 )
 
 // ID prefixes for GenerateUniqueID.
@@ -36,9 +38,16 @@ const (
 	PaymentMethodOther        = "other"
 )
 
+const (
+	DiscountTypePoints = "points"
+)
+
+// PaisePerPoint is the redemption value of one loyalty point (Rs 25).
+const PaisePerPoint = int64(2500)
+
 type DiscountType struct {
 	ID          string `json:"id"`
-	Type        string `json:"type"`
+	Type        string `json:"type"` // DiscountType*
 	Amount      int64  `json:"amount"`
 	Description string `json:"description"`
 }

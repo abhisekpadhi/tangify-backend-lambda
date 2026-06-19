@@ -2,7 +2,7 @@
 
 Base URL is your Lambda Function URL or API Gateway stage URL (examples use `https://example.lambda-url.us-east-1.on.aws`).
 
-- **Public (no JWT):** `GET /api/v1/health`, `GET /api/v1/menu`, `POST /api/v1/auth/login`, `POST /api/v1/users/bootstrap` (bootstrap requires `X-Bootstrap-Secret` header), `POST /api/v1/users/customer-onboard` (requires `X-CF-Secret`)  
+- **Public (no JWT):** `GET /api/v1/health`, `GET /api/v1/menu`, `POST /api/v1/reviews/generate`, `POST /api/v1/auth/login`, `POST /api/v1/users/bootstrap` (bootstrap requires `X-Bootstrap-Secret` header), `POST /api/v1/users/customer-onboard` (requires `X-CF-Secret`)  
 - **Protected:** other routes require header `Authorization: Bearer <JWT>`
 
 Successful responses return **JSON bodies directly** (no `{ "data": ... }` wrapper). Errors use  
@@ -49,6 +49,42 @@ Loads menu rows from Google Sheets (server-side env: `GOOGLE_SHEETS_API_KEY`, `G
 
 ```bash
 curl -sS "https://EXAMPLE.lambda-url.on.aws/api/v1/menu"
+```
+
+---
+
+## Reviews (LLM-generated)
+
+### `POST /api/v1/reviews/generate`
+
+Generates 3 short, distinct casual customer-style reviews for Tangify using OpenRouter (`openrouter/free`). Requires server env `LLM_API_KEY` (OpenRouter API key).
+
+**Request body:**
+
+```json
+{ "rating": 4 }
+```
+
+- `rating` — integer `1`–`5`
+
+**Response** `200`:
+
+```json
+{
+  "reviews": [
+    "Aaji lunch re asithili, dalma ta bhala thila. service ta jaldi hela.",
+    "Food quality bhala, staff friendly. waiting time thoda thila but ok.",
+    "Ambience simple but clean. chicken pakoda ta must try, next time bhi aasiba."
+  ]
+}
+```
+
+**Errors:** `400` invalid rating, `503` missing `LLM_API_KEY`, `502` OpenRouter failure.
+
+```bash
+curl -sS -X POST -H "Content-Type: application/json" \
+  -d '{"rating":5}' \
+  "https://EXAMPLE.lambda-url.on.aws/api/v1/reviews/generate"
 ```
 
 ---
@@ -588,7 +624,89 @@ curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application
 
 ---
 
+### `PUT /api/v1/billing/bills/with-line-items`
+
+Create or update a **bill snapshot** with embedded line items (table `tangify_bills_with_line_items`). JWT required.
+
+**Create** — send `state_key` (no `id`). Idempotent: retries with the same `state_key` return the existing bill without re-deducting points or calling the invoice worker again.
+
+**Update** — send `id` (invoice number from create). Points discount is frozen from create; wallet is not touched.
+
+**Request body** — `UpsertBillWithLineItemsRequest`:
+
+```json
+{
+  "state_key": "sess_abc::checkout",
+  "session_id": "sess_abc",
+  "table_ids": ["T5"],
+  "customer_id": "user_uuid",
+  "line_items": [
+    { "name": "Dal", "quantity": 2, "price": 15000 }
+  ],
+  "discounts": [
+    { "id": "points", "type": "points", "amount": 0 }
+  ],
+  "taxes": [
+    { "id": "gst", "name": "GST", "rate_in_bps": 500, "amount_in_paise": 1500 }
+  ]
+}
+```
+
+Points discount rules (this API only):
+- `type: "points"` — caller `amount` is **ignored**; server uses full wallet balance at `customer_id`.
+- 1 point = Rs 25 (`2500` paise).
+- Points are deducted from the wallet **on create only** (DynamoDB transaction).
+
+**Response** `200` — full `BillWithLineItems` document; `id` is the invoice number.
+
+### `GET /api/v1/billing/bills/with-line-items?bill_id=<invoice_number>`
+
+Fetch a bill snapshot by invoice number / `id`. JWT required.
+
+---
+
 ## Loyalty
+
+### OTP login (public)
+
+Customer lookup before billing. **No JWT.** User and wallet are created **only after** OTP verify.
+
+#### `POST /api/v1/loyalty/otp/send`
+
+```json
+{ "phone": "+919876543210", "name": "optional" }
+```
+
+Response:
+
+```json
+{ "sent": true }
+```
+
+- 4-digit OTP via WhatsApp (Gupshup).
+- Valid 5 minutes; max 1 send per phone per 60 seconds.
+
+#### `POST /api/v1/loyalty/otp/verify`
+
+```json
+{ "phone": "+919876543210", "otp": "1234", "name": "optional" }
+```
+
+Response:
+
+```json
+{
+  "user_id": "…",
+  "points_balance": 0,
+  "phone": "+919876543210"
+}
+```
+
+Use `user_id` as `customer_id` on bill checkout. Max 5 failed verify attempts per challenge.
+
+---
+
+### Legacy loyalty (JWT)
 
 Policy:
 - Earn `10` points for every `Rs 250` spend (`25000` paise).

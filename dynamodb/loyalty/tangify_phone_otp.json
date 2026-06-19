@@ -1,0 +1,14 @@
+{
+  "TableName": "tangify_phone_otp",
+  "BillingMode": "PAY_PER_REQUEST",
+  "AttributeDefinitions": [
+    { "AttributeName": "phone", "AttributeType": "S" }
+  ],
+  "KeySchema": [
+    { "AttributeName": "phone", "KeyType": "HASH" }
+  ],
+  "TimeToLiveSpecification": {
+    "AttributeName": "ttl",
+    "Enabled": true
+  }
+}

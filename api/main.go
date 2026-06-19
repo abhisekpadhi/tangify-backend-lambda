@@ -18,6 +18,7 @@ import (
 	"tangify-backend-lambda/billing"
 	"tangify-backend-lambda/loyalty"
 	"tangify-backend-lambda/menu"
+	"tangify-backend-lambda/reviews"
 	"tangify-backend-lambda/users"
 )
 
@@ -34,8 +35,11 @@ var whitelistedRoutes = []string{
 	"/api/v1/auth/login",
 	"/api/v1/users/bootstrap",
 	"/api/v1/users/customer-onboard",
+	"/api/v1/loyalty/otp/send",
+	"/api/v1/loyalty/otp/verify",
 	"/api/v1/menu",
 	"/api/v1/health",
+	"/api/v1/reviews/generate",
 }
 
 type AppContext struct {
@@ -122,6 +126,20 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 		return ApiResponse.Success(items), nil
 	}
 
+	if method == "POST" && route == "/api/v1/reviews/generate" {
+		var body reviews.GenerateReviewRequest
+		if err := json.Unmarshal([]byte(request.Body), &body); err != nil {
+			return ApiResponse.BadRequest("Invalid JSON body"), nil
+		}
+		reviewService := reviews.NewService(os.Getenv("LLM_API_KEY"))
+		data, err := reviewService.Generate(ctx, body)
+		if err != nil {
+			fmt.Println("review generate error: ", err)
+			return ApiResponse.Error(reviews.ErrorStatus(err), err.Error()), nil
+		}
+		return ApiResponse.Success(data), nil
+	}
+
 	dynamoDBClient, err := awsUtils.GetDynamoDBClient()
 	if err != nil {
 		fmt.Println("error getting DynamoDB client: ", err)
@@ -139,7 +157,8 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 		return j.GenerateJWT(userID, name, role, 24*time.Hour)
 	})
 	billRepo := billing.NewRepository(dynamoDBClient)
-	loyaltyService := loyalty.NewService(loyalty.NewRepository(dynamoDBClient), billRepo)
+	loyaltyRepo := loyalty.NewRepository(dynamoDBClient)
+	loyaltyService := loyalty.NewService(loyaltyRepo, billRepo)
 
 	if method == "POST" && route == "/api/v1/auth/login" {
 		var body users.LoginRequest
@@ -194,6 +213,38 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 		return ApiResponse.Success(user), nil
 	}
 
+	otpService := loyalty.NewOTPService(
+		loyalty.NewOTPRepository(dynamoDBClient),
+		loyaltyRepo,
+		usersService,
+		jwtSecret,
+		sendGupshupOTPMessage,
+	)
+
+	if method == "POST" && route == "/api/v1/loyalty/otp/send" {
+		var body loyalty.SendOTPRequest
+		if err := json.Unmarshal([]byte(request.Body), &body); err != nil {
+			return ApiResponse.BadRequest("Invalid JSON body"), nil
+		}
+		data, err := otpService.Send(ctx, body, commonUtils.GetCurrentTimestamp())
+		if err != nil {
+			return ApiResponse.Error(loyalty.OTPErrorStatus(err), err.Error()), nil
+		}
+		return ApiResponse.Success(data), nil
+	}
+
+	if method == "POST" && route == "/api/v1/loyalty/otp/verify" {
+		var body loyalty.VerifyOTPRequest
+		if err := json.Unmarshal([]byte(request.Body), &body); err != nil {
+			return ApiResponse.BadRequest("Invalid JSON body"), nil
+		}
+		data, err := otpService.Verify(ctx, body, commonUtils.GetCurrentTimestamp())
+		if err != nil {
+			return ApiResponse.Error(loyalty.OTPErrorStatus(err), err.Error()), nil
+		}
+		return ApiResponse.Success(data), nil
+	}
+
 	if !slices.Contains(whitelistedRoutes, route) {
 		err = doJwtAuth(request, jwtSecret, appContext)
 		if err != nil {
@@ -202,6 +253,11 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 	}
 
 	billingService := billing.NewService(billRepo)
+	billsWithLineItemsRepo := billing.NewBillWithLineItemsRepository(dynamoDBClient)
+	billsWithLineItemsService := billing.NewBillWithLineItemsService(
+		billsWithLineItemsRepo,
+		loyalty.NewWalletProvider(loyaltyRepo),
+	)
 	staffID := staffIDFromContext(appContext)
 
 	// --- Users (JWT) ---
@@ -384,6 +440,34 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 		}
 
 		return ApiResponse.Success(workerResp), nil
+	}
+
+	if method == "PUT" && route == "/api/v1/billing/bills/with-line-items" {
+		var body billing.UpsertBillWithLineItemsRequest
+		if err := json.Unmarshal([]byte(request.Body), &body); err != nil {
+			return ApiResponse.BadRequest("Invalid JSON body"), nil
+		}
+		data, err := billsWithLineItemsService.Upsert(ctx, body, staffID, commonUtils.GetCurrentTimestamp())
+		if err != nil {
+			st := http.StatusBadRequest
+			if errors.Is(err, billing.ErrBillNotFound) {
+				st = http.StatusNotFound
+			}
+			return ApiResponse.Error(st, err.Error()), nil
+		}
+		return ApiResponse.Success(data), nil
+	}
+
+	if method == "GET" && route == "/api/v1/billing/bills/with-line-items" {
+		billID := queryParam(request, "bill_id")
+		data, err := billsWithLineItemsService.Get(ctx, billID)
+		if err != nil {
+			return ApiResponse.Error(http.StatusBadRequest, err.Error()), nil
+		}
+		if data == nil {
+			return ApiResponse.Error(http.StatusNotFound, "bill not found"), nil
+		}
+		return ApiResponse.Success(data), nil
 	}
 
 	if method == "POST" && route == "/api/v1/loyalty/points/add" {

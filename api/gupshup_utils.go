@@ -15,6 +15,14 @@ import (
 const gupshupMessagesURL = "https://api.gupshup.io/wa/api/v1/msg"
 
 func sendGupshupPlaceholderMessage(ctx context.Context, phone string, name string) error {
+	return sendGupshupTextMessage(ctx, phone, fmt.Sprintf("Hi %s, welcome to House of Odia loyalty program. (Template placeholder)", name))
+}
+
+func sendGupshupOTPMessage(ctx context.Context, phone, otp string) error {
+	return sendGupshupTextMessage(ctx, phone, fmt.Sprintf("Your House of Odia OTP is %s. Valid for 5 minutes.", otp))
+}
+
+func sendGupshupTextMessage(ctx context.Context, phone, text string) error {
 	apiKey := strings.TrimSpace(os.Getenv("GUPSHUP_API_KEY"))
 	source := strings.TrimSpace(os.Getenv("GUPSHUP_SOURCE"))
 	if apiKey == "" || source == "" {
@@ -27,7 +35,7 @@ func sendGupshupPlaceholderMessage(ctx context.Context, phone string, name strin
 		"destination": phone,
 		"message": map[string]any{
 			"type": "text",
-			"text": fmt.Sprintf("Hi %s, welcome to House of Odia loyalty program. (Template placeholder)", name),
+			"text": text,
 		},
 	}
 	b, err := json.Marshal(payload)

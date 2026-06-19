@@ -54,6 +54,12 @@ type LineItem struct {
 	Status       string            `json:"status"`                  // LineItemStatus*
 }
 
+type LineItemV0 struct {
+	Name     string `json:"name"`
+	Quantity int    `json:"quantity"`
+	Price    int64  `json:"price"` // paise (per line or per unit — document in API)
+}
+
 type LineItemOverride struct {
 	Quantity *int   `json:"quantity,omitempty"`
 	Price    *int64 `json:"price,omitempty"`
@@ -112,6 +118,40 @@ type Bill struct {
 	TotalTaxInPaise        int64          `json:"total_tax_in_paise"`
 	TotalDiscountInPaise   int64          `json:"total_discount_in_paise"`
 	TotalAmountInPaise     int64          `json:"total_amount_in_paise"`
+}
+
+// BillWithLineItems
+type BillWithLineItems struct {
+	ID                   string         `json:"id"` // invoice number - unique globally, autoincrement using cloudflare sql
+	SessionID            string         `json:"session_id"`
+	TableIDs             []string       `json:"table_ids"`
+	StaffID              string         `json:"staff_id"`
+	CustomerID           string         `json:"customer_id"` // user id of the customer
+	PaymentMethod        string         `json:"payment_method"` // PaymentMethod*
+	PaymentStatus        string         `json:"payment_status"` // PaymentStatus*
+	CreatedAt            int64          `json:"created_at"`
+	UpdatedAt            int64          `json:"updated_at"`
+	LineItems            []LineItemV0   `json:"line_items"`
+	Discounts            []DiscountType `json:"discounts"`
+	Taxes                []TaxType      `json:"taxes"`
+	TotalTaxInPaise      int64          `json:"total_tax_in_paise"`
+	TotalDiscountInPaise int64          `json:"total_discount_in_paise"`
+	TotalAmountInPaise   int64          `json:"total_amount_in_paise"`
+	StateKey             string         `json:"state_key"` // unique key for the state of the bill - used to generate the invoice number
+}
+
+type UpsertBillWithLineItemsRequest struct {
+	StateKey      string         `json:"state_key,omitempty"`
+	ID            string         `json:"id,omitempty"`
+	SessionID     string         `json:"session_id,omitempty"`
+	TableIDs      []string       `json:"table_ids,omitempty"`
+	StaffID       string         `json:"staff_id,omitempty"`
+	CustomerID    string         `json:"customer_id,omitempty"`
+	LineItems     []LineItemV0   `json:"line_items"`
+	Discounts     []DiscountType `json:"discounts,omitempty"`
+	Taxes         []TaxType      `json:"taxes,omitempty"`
+	PaymentMethod *string        `json:"payment_method,omitempty"`
+	PaymentStatus *string        `json:"payment_status,omitempty"`
 }
 
 // --- Read models (assembled in app; not one Dynamo item) ---
