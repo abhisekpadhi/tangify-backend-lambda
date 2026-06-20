@@ -24,8 +24,9 @@ var (
 )
 
 type openRouterRequest struct {
-	Model    string              `json:"model"`
-	Messages []openRouterMessage `json:"messages"`
+	Model       string              `json:"model"`
+	Messages    []openRouterMessage `json:"messages"`
+	Temperature float64             `json:"temperature,omitempty"`
 }
 
 type openRouterMessage struct {
@@ -66,11 +67,12 @@ func (s *Service) Generate(ctx context.Context, req GenerateReviewRequest, menuI
 
 	prompt := buildPrompt(req.Rating, menuItemNames)
 	body, err := json.Marshal(openRouterRequest{
-		Model: openRouterModel,
+		Model:       openRouterModel,
+		Temperature: 0.95,
 		Messages: []openRouterMessage{
 			{
 				Role:    "system",
-				Content: "You write casual restaurant reviews that sound like real customers from Odisha. Reply with only the review text, no quotes or labels.",
+				Content: "You write casual Google Maps reviews for an Odia restaurant in Bhubaneswar. Each review uses a different language mix: plain English, Odia-English, Hindi, or Hinglish — follow the user prompt exactly. Reply with only the review text.",
 			},
 			{Role: "user", Content: prompt},
 		},
@@ -119,37 +121,6 @@ func (s *Service) Generate(ctx context.Context, req GenerateReviewRequest, menuI
 	}
 
 	return &GenerateReviewResponse{Review: review}, nil
-}
-
-func buildPrompt(rating int, menuItemNames []string) string {
-	tone := map[int]string{
-		5: "very happy, loved the food and vibe",
-		4: "good experience, mostly happy with food/service",
-		3: "okay-ish, mixed feelings, some good some not",
-		2: "disappointed, few things went wrong",
-		1: "bad experience, unhappy",
-	}[rating]
-
-	menuSection := "Do not mention any specific dish names — talk about food/service in general only."
-	if len(menuItemNames) > 0 {
-		menuSection = "Menu items Tangify actually serves (if you mention food by name, pick ONLY from this list — never invent dishes not listed here):\n" +
-			strings.Join(menuItemNames, "\n")
-	}
-
-	return fmt.Sprintf(`Write a short Google Maps style review for Tangify restaurant (Odia food place in Bhubaneswar area).
-
-Star rating: %d/5
-Mood: %s
-
-%s
-
-Rules:
-- 1 to 3 short sentences max, under 280 characters if possible
-- Sound like a normal person typing on phone, not polished or marketing
-- Mix Odia and English naturally (romanized Odia is fine), like "bhala lagila", "jaldi serve hela", "next time bhi aasiba"
-- Mention 1-2 specific things casually (food taste, staff, ambience, waiting time, value) — make it feel random each time
-- No hashtags, no emojis, no bullet points, no "I rate X stars"
-- Do not mention being an AI`, rating, tone, menuSection)
 }
 
 func ErrorStatus(err error) int {
