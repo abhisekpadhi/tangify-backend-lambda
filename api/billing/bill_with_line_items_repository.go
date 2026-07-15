@@ -17,16 +17,26 @@ type PointsWalletProvider interface {
 
 // BillWithLineItemsRepository persists bill snapshots with embedded line items.
 type BillWithLineItemsRepository struct {
-	db *dynamodb.Client
+	db        *dynamodb.Client
+	tableName string
 }
 
-func NewBillWithLineItemsRepository(db *dynamodb.Client) *BillWithLineItemsRepository {
-	return &BillWithLineItemsRepository{db: db}
+const DevTableNameBillsWithLineItems = "dev-tangify_bills_with_line_items"
+
+func NewBillWithLineItemsRepository(
+	db *dynamodb.Client,
+	tableName ...string,
+) *BillWithLineItemsRepository {
+	name := TableNameBillsWithLineItems
+	if len(tableName) > 0 && tableName[0] != "" {
+		name = tableName[0]
+	}
+	return &BillWithLineItemsRepository{db: db, tableName: name}
 }
 
 func (r *BillWithLineItemsRepository) Get(ctx context.Context, id string) (*BillWithLineItems, error) {
 	out, err := r.db.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName:      aws.String(TableNameBillsWithLineItems),
+		TableName:      aws.String(r.tableName),
 		ConsistentRead: aws.Bool(true),
 		Key: map[string]types.AttributeValue{
 			"id": &types.AttributeValueMemberS{Value: id},
@@ -43,7 +53,7 @@ func (r *BillWithLineItemsRepository) Get(ctx context.Context, id string) (*Bill
 
 func (r *BillWithLineItemsRepository) GetByStateKey(ctx context.Context, stateKey string) (*BillWithLineItems, error) {
 	out, err := r.db.Query(ctx, &dynamodb.QueryInput{
-		TableName:              aws.String(TableNameBillsWithLineItems),
+		TableName:              aws.String(r.tableName),
 		IndexName:              aws.String(GSIStateKey),
 		KeyConditionExpression: aws.String("state_key = :sk"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
@@ -69,7 +79,7 @@ func (r *BillWithLineItemsRepository) Put(ctx context.Context, bill *BillWithLin
 		return err
 	}
 	_, err = r.db.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(TableNameBillsWithLineItems),
+		TableName: aws.String(r.tableName),
 		Item:      item,
 	})
 	return err
@@ -95,7 +105,7 @@ func (r *BillWithLineItemsRepository) TransactCreate(
 	txItems := []types.TransactWriteItem{
 		{
 			Put: &types.Put{
-				TableName:           aws.String(TableNameBillsWithLineItems),
+				TableName:           aws.String(r.tableName),
 				Item:                item,
 				ConditionExpression: aws.String("attribute_not_exists(id)"),
 			},

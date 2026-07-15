@@ -269,7 +269,17 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 	}
 
 	billingService := billing.NewService(billRepo)
-	billsWithLineItemsRepo := billing.NewBillWithLineItemsRepository(dynamoDBClient)
+	billsWithLineItemsTable := billing.TableNameBillsWithLineItems
+	if strings.EqualFold(
+		strings.TrimSpace(request.Headers["x-tangify-environment"]),
+		"dev",
+	) {
+		billsWithLineItemsTable = billing.DevTableNameBillsWithLineItems
+	}
+	billsWithLineItemsRepo := billing.NewBillWithLineItemsRepository(
+		dynamoDBClient,
+		billsWithLineItemsTable,
+	)
 	billsWithLineItemsService := billing.NewBillWithLineItemsService(
 		billsWithLineItemsRepo,
 		loyalty.NewWalletProvider(loyaltyRepo),

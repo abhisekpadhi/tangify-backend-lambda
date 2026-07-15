@@ -1,0 +1,20 @@
+{
+  "TableName": "dev-tangify_bills_with_line_items",
+  "BillingMode": "PAY_PER_REQUEST",
+  "AttributeDefinitions": [
+    { "AttributeName": "id", "AttributeType": "S" },
+    { "AttributeName": "state_key", "AttributeType": "S" }
+  ],
+  "KeySchema": [
+    { "AttributeName": "id", "KeyType": "HASH" }
+  ],
+  "GlobalSecondaryIndexes": [
+    {
+      "IndexName": "GSI_StateKey",
+      "KeySchema": [
+        { "AttributeName": "state_key", "KeyType": "HASH" }
+      ],
+      "Projection": { "ProjectionType": "ALL" }
+    }
+  ]
+}
