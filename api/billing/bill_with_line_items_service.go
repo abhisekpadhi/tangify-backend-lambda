@@ -2,10 +2,9 @@ package billing
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 type BillWithLineItemsService struct {
@@ -44,6 +43,11 @@ func (s *BillWithLineItemsService) Upsert(
 }
 
 const pointsWalletTableName = "tangify_points_wallet"
+
+func invoiceWorkerBillID(stateKey string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(stateKey)))
+	return fmt.Sprintf("%s_state_%x", PrefixBill, sum[:16])
+}
 
 func (s *BillWithLineItemsService) create(
 	ctx context.Context,
@@ -85,7 +89,10 @@ func (s *BillWithLineItemsService) create(
 		return nil, err
 	}
 
-	workerBillID := PrefixBill + "_" + uuid.NewString()
+	// The invoice worker is idempotent by bill_id. Deriving that key from the
+	// checkout state makes concurrent clients and ambiguous retries converge on
+	// the same invoice number.
+	workerBillID := invoiceWorkerBillID(stateKey)
 	inv, err := FetchInvoiceNumber(ctx, workerBillID)
 	if err != nil {
 		return nil, err
@@ -116,6 +123,12 @@ func (s *BillWithLineItemsService) create(
 		now,
 	)
 	if err != nil {
+		// A concurrent request with the same state key receives the same invoice
+		// number. Its conditional put can lose the race, so return the winner.
+		existing, getErr := s.repo.Get(ctx, inv.InvoiceNumber)
+		if getErr == nil && existing != nil && existing.StateKey == stateKey {
+			return existing, nil
+		}
 		return nil, err
 	}
 	return bill, nil

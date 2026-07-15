@@ -348,6 +348,18 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 		return ApiResponse.Success(data), nil
 	}
 
+	if method == "PATCH" && route == "/api/v1/billing/sessions" {
+		var body billing.UpdateSessionRequest
+		if err := json.Unmarshal([]byte(request.Body), &body); err != nil {
+			return ApiResponse.BadRequest("Invalid JSON body"), nil
+		}
+		data, err := billingService.UpdateSession(ctx, body, commonUtils)
+		if err != nil {
+			return ApiResponse.Error(http.StatusBadRequest, err.Error()), nil
+		}
+		return ApiResponse.Success(data), nil
+	}
+
 	if method == "POST" && route == "/api/v1/billing/orders" {
 		var body billing.AddOrderToSessionRequest
 		if err := json.Unmarshal([]byte(request.Body), &body); err != nil {
@@ -545,6 +557,34 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 			return ApiResponse.BadRequest("Invalid JSON body"), nil
 		}
 		data, err := billingService.PatchLineItemStatus(ctx, body, commonUtils)
+		if err != nil {
+			return ApiResponse.Error(http.StatusBadRequest, err.Error()), nil
+		}
+		if pubErr := ablyUtils.PublishJSON(ctx, kitchenChannel(data.VenueID), "order.updated", data); pubErr != nil {
+			fmt.Println("ably publish error (kitchen order.updated): ", pubErr)
+		}
+		if data.KitchenStatus == billing.KitchenStatusReady {
+			if pubErr := ablyUtils.PublishJSON(ctx, waiterChannel(data.VenueID), "order.ready", data); pubErr != nil {
+				fmt.Println("ably publish error (waiter order.ready): ", pubErr)
+			}
+		}
+		return ApiResponse.Success(data), nil
+	}
+
+	if method == "GET" && route == "/api/v1/kitchen/unit-board" {
+		data, err := billingService.KitchenUnitBoard(ctx, queryParam(request, "venue_id"))
+		if err != nil {
+			return ApiResponse.Error(http.StatusInternalServerError, err.Error()), nil
+		}
+		return ApiResponse.Success(data), nil
+	}
+
+	if method == "PATCH" && route == "/api/v1/kitchen/line-items/unit" {
+		var body billing.PatchLineItemUnitRequest
+		if err := json.Unmarshal([]byte(request.Body), &body); err != nil {
+			return ApiResponse.BadRequest("Invalid JSON body"), nil
+		}
+		data, err := billingService.PatchLineItemUnit(ctx, body, commonUtils)
 		if err != nil {
 			return ApiResponse.Error(http.StatusBadRequest, err.Error()), nil
 		}

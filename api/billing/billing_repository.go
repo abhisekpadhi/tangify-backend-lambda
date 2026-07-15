@@ -228,6 +228,15 @@ func encodeSession(s *TableSession) (map[string]types.AttributeValue, error) {
 	if s.UpdatedAt != 0 {
 		m["updated_at"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(s.UpdatedAt, 10)}
 	}
+	if s.Pax > 0 {
+		m["pax"] = &types.AttributeValueMemberN{Value: strconv.Itoa(s.Pax)}
+	}
+	if s.GroupNotes != "" {
+		m["group_notes"] = &types.AttributeValueMemberS{Value: s.GroupNotes}
+	}
+	if sf := encodeServiceFlags(s.ServiceFlags); sf != nil {
+		m["service_flags"] = &types.AttributeValueMemberM{Value: sf}
+	}
 	return m, nil
 }
 
@@ -255,35 +264,18 @@ func decodeSession(item map[string]types.AttributeValue) (*TableSession, error) 
 			}
 		}
 	}
+	s.Pax, _ = atoiAttr(item, "pax")
+	if v, ok := item["group_notes"].(*types.AttributeValueMemberS); ok {
+		s.GroupNotes = v.Value
+	}
+	s.ServiceFlags = decodeServiceFlags(item)
 	return s, nil
 }
 
 func encodeOrder(o *Order) (map[string]types.AttributeValue, error) {
 	items := make([]types.AttributeValue, 0, len(o.Items))
 	for _, li := range o.Items {
-		im := map[string]types.AttributeValue{
-			"id":       &types.AttributeValueMemberS{Value: li.ID},
-			"name":     &types.AttributeValueMemberS{Value: li.Name},
-			"quantity": &types.AttributeValueMemberN{Value: strconv.Itoa(li.Quantity)},
-			"price":    &types.AttributeValueMemberN{Value: strconv.FormatInt(li.Price, 10)},
-			"status":   &types.AttributeValueMemberS{Value: li.Status},
-		}
-		if li.UserOverride != nil {
-			ov := map[string]types.AttributeValue{}
-			if li.UserOverride.Quantity != nil {
-				ov["quantity"] = &types.AttributeValueMemberN{Value: strconv.Itoa(*li.UserOverride.Quantity)}
-			}
-			if li.UserOverride.Price != nil {
-				ov["price"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(*li.UserOverride.Price, 10)}
-			}
-			if len(ov) > 0 {
-				im["user_override"] = &types.AttributeValueMemberM{Value: ov}
-			}
-		}
-		if li.Removed {
-			im["removed"] = &types.AttributeValueMemberBOOL{Value: true}
-		}
-		items = append(items, &types.AttributeValueMemberM{Value: im})
+		items = append(items, &types.AttributeValueMemberM{Value: encodeLineItem(li)})
 	}
 	m := map[string]types.AttributeValue{
 		"id":             &types.AttributeValueMemberS{Value: o.ID},
@@ -304,11 +296,23 @@ func encodeOrder(o *Order) (map[string]types.AttributeValue, error) {
 	if o.CustomerID != "" {
 		m["customer_id"] = &types.AttributeValueMemberS{Value: o.CustomerID}
 	}
+	if o.CustomerName != "" {
+		m["customer_name"] = &types.AttributeValueMemberS{Value: o.CustomerName}
+	}
+	if o.CustomerPhone != "" {
+		m["customer_phone"] = &types.AttributeValueMemberS{Value: o.CustomerPhone}
+	}
+	if o.Notes != "" {
+		m["notes"] = &types.AttributeValueMemberS{Value: o.Notes}
+	}
 	if o.StaffID != "" {
 		m["staff_id"] = &types.AttributeValueMemberS{Value: o.StaffID}
 	}
 	if o.ReadyAt != 0 {
 		m["ready_at"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(o.ReadyAt, 10)}
+	}
+	if o.MarkedDoneAt != 0 {
+		m["marked_done_at"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(o.MarkedDoneAt, 10)}
 	}
 	if o.CompletedAt != 0 {
 		m["completed_at"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(o.CompletedAt, 10)}
@@ -342,6 +346,15 @@ func decodeOrder(item map[string]types.AttributeValue) (*Order, error) {
 	if v, ok := item["customer_id"].(*types.AttributeValueMemberS); ok {
 		o.CustomerID = v.Value
 	}
+	if v, ok := item["customer_name"].(*types.AttributeValueMemberS); ok {
+		o.CustomerName = v.Value
+	}
+	if v, ok := item["customer_phone"].(*types.AttributeValueMemberS); ok {
+		o.CustomerPhone = v.Value
+	}
+	if v, ok := item["notes"].(*types.AttributeValueMemberS); ok {
+		o.Notes = v.Value
+	}
 	if v, ok := item["staff_id"].(*types.AttributeValueMemberS); ok {
 		o.StaffID = v.Value
 	}
@@ -351,6 +364,7 @@ func decodeOrder(item map[string]types.AttributeValue) (*Order, error) {
 	o.TotalPrice, _ = numAttr(item, "total_price")
 	o.OrderedAt, _ = numAttr(item, "ordered_at")
 	o.ReadyAt, _ = numAttr(item, "ready_at")
+	o.MarkedDoneAt, _ = numAttr(item, "marked_done_at")
 	o.CompletedAt, _ = numAttr(item, "completed_at")
 	o.UpdatedAt, _ = numAttr(item, "updated_at")
 	if l, ok := item["items"].(*types.AttributeValueMemberL); ok {
@@ -359,41 +373,7 @@ func decodeOrder(item map[string]types.AttributeValue) (*Order, error) {
 			if !ok {
 				continue
 			}
-			li := LineItem{}
-			if s, ok := m.Value["id"].(*types.AttributeValueMemberS); ok {
-				li.ID = s.Value
-			}
-			if s, ok := m.Value["name"].(*types.AttributeValueMemberS); ok {
-				li.Name = s.Value
-			}
-			li.Quantity, _ = atoiAttr(m.Value, "quantity")
-			li.Price, _ = numAttr(m.Value, "price")
-			if um, ok := m.Value["user_override"].(*types.AttributeValueMemberM); ok {
-				ov := &LineItemOverride{}
-				hasOverride := false
-				if q, ok := um.Value["quantity"].(*types.AttributeValueMemberN); ok {
-					if qty, err := strconv.Atoi(q.Value); err == nil {
-						ov.Quantity = &qty
-						hasOverride = true
-					}
-				}
-				if p, ok := um.Value["price"].(*types.AttributeValueMemberN); ok {
-					if price, err := strconv.ParseInt(p.Value, 10, 64); err == nil {
-						ov.Price = &price
-						hasOverride = true
-					}
-				}
-				if hasOverride {
-					li.UserOverride = ov
-				}
-			}
-			if b, ok := m.Value["removed"].(*types.AttributeValueMemberBOOL); ok {
-				li.Removed = b.Value
-			}
-			if s, ok := m.Value["status"].(*types.AttributeValueMemberS); ok {
-				li.Status = s.Value
-			}
-			o.Items = append(o.Items, li)
+			o.Items = append(o.Items, decodeLineItem(m.Value))
 		}
 	}
 	return o, nil
@@ -442,6 +422,7 @@ func encodeBill(b *Bill) (map[string]types.AttributeValue, error) {
 		"created_at":              &types.AttributeValueMemberN{Value: strconv.FormatInt(b.CreatedAt, 10)},
 		"updated_at":              &types.AttributeValueMemberN{Value: strconv.FormatInt(b.UpdatedAt, 10)},
 		"table_ids":               &types.AttributeValueMemberL{Value: tids},
+		"subtotal_in_paise":       &types.AttributeValueMemberN{Value: strconv.FormatInt(b.SubtotalInPaise, 10)},
 		"total_tax_in_paise":      &types.AttributeValueMemberN{Value: strconv.FormatInt(b.TotalTaxInPaise, 10)},
 		"total_discount_in_paise": &types.AttributeValueMemberN{Value: strconv.FormatInt(b.TotalDiscountInPaise, 10)},
 		"total_amount_in_paise":   &types.AttributeValueMemberN{Value: strconv.FormatInt(b.TotalAmountInPaise, 10)},
@@ -471,6 +452,9 @@ func encodeBill(b *Bill) (map[string]types.AttributeValue, error) {
 	}
 	if b.StaffID != "" {
 		m["staff_id"] = &types.AttributeValueMemberS{Value: b.StaffID}
+	}
+	if b.StaffWelfareInPaise != 0 {
+		m["staff_welfare_in_paise"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(b.StaffWelfareInPaise, 10)}
 	}
 	return m, nil
 }
@@ -506,8 +490,10 @@ func decodeBill(item map[string]types.AttributeValue) (*Bill, error) {
 	}
 	b.CreatedAt, _ = numAttr(item, "created_at")
 	b.UpdatedAt, _ = numAttr(item, "updated_at")
+	b.SubtotalInPaise, _ = numAttr(item, "subtotal_in_paise")
 	b.TotalTaxInPaise, _ = numAttr(item, "total_tax_in_paise")
 	b.TotalDiscountInPaise, _ = numAttr(item, "total_discount_in_paise")
+	b.StaffWelfareInPaise, _ = numAttr(item, "staff_welfare_in_paise")
 	b.TotalAmountInPaise, _ = numAttr(item, "total_amount_in_paise")
 	b.LoyaltyPointsEarned, _ = numAttr(item, "loyalty_points_earned")
 	b.LoyaltyPointsRedeemed, _ = numAttr(item, "loyalty_points_redeemed")

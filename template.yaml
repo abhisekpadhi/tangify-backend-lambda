@@ -35,6 +35,7 @@ Resources:
           AllowMethods:
             - GET
             - POST
+            - PUT
           AllowHeaders:
             - "*"
       # Do not define Environment here — CloudFormation replaces the whole block on

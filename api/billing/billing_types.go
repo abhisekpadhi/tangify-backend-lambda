@@ -39,7 +39,40 @@ const (
 )
 
 const (
-	DiscountTypePoints = "points"
+	DiscountTypePoints     = "points"
+	DiscountTypeMembership = "membership"
+	DiscountTypeComp       = "comp"
+)
+
+const (
+	ChargeTypeStaffWelfare = "staff_welfare"
+	ChargeTypePackaging    = "packaging"
+	ChargeTypeWater        = "water"
+)
+
+// Per-unit kitchen states (mirrors UI unitStates).
+const (
+	UnitStatePending    = "pending"
+	UnitStateFulfilled  = "fulfilled"
+	UnitStateCancelled  = "cancelled"
+)
+
+// ItemCancelReason matches houseofodia-menu ItemCancelReason.
+const (
+	CancelReasonCustomerCancel         = "customer_cancel"
+	CancelReasonWaiterCancel           = "waiter_cancel"
+	CancelReasonKitchenOutOfStock      = "kitchen_out_of_stock"
+	CancelReasonKitchenUnableToPrepare = "kitchen_unable_to_prepare"
+	CancelReasonWrongOrder             = "wrong_order"
+	CancelReasonDuplicateOrder         = "duplicate_order"
+	CancelReasonQualityIssue           = "quality_issue"
+	CancelReasonManagerVoid            = "manager_void"
+)
+
+// UI OrderKind aliases accepted by NormalizeChannel.
+const (
+	OrderChannelTable    = "table"
+	OrderChannelDelivery = "delivery"
 )
 
 // PaisePerPoint is the redemption value of one loyalty point (Rs 25).

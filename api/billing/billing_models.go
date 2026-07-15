@@ -20,17 +20,28 @@ const (
 	SessionStatusClosed  = "closed"  // payment settled; table(s) available again
 )
 
+// SessionServiceFlags are table-level service markers (mirrors UI TOrder flags).
+type SessionServiceFlags struct {
+	WelcomeDrinkServed  bool `json:"welcome_drink_served,omitempty"`
+	ComplementaryServed bool `json:"complementary_served,omitempty"`
+	KidMenuEnabled      bool `json:"kid_menu_enabled,omitempty"`
+	KidMenuServed       bool `json:"kid_menu_served,omitempty"`
+}
+
 // TableSession is one seated party: may span one or many physical tables (joined).
 // Opened when the first order is placed; closed after billing is done.
 type TableSession struct {
-	ID        string   `json:"id"`
-	TableIDs  []string `json:"table_ids"`         // single or joined tables for this party
-	Status    string   `json:"status"`            // SessionStatus*
-	BillID    string   `json:"bill_id,omitempty"` // set when waiter starts close-out (SessionStatusBilling)
-	OpenedAt  int64    `json:"opened_at"`         // Unix ms
-	ClosedAt  int64    `json:"closed_at,omitempty"`
-	UpdatedAt int64    `json:"updated_at,omitempty"`
-	VenueID   string   `json:"venue_id,omitempty"`
+	ID           string               `json:"id"`
+	TableIDs     []string             `json:"table_ids"`
+	Status       string               `json:"status"`
+	BillID       string               `json:"bill_id,omitempty"`
+	Pax          int                  `json:"pax,omitempty"`
+	GroupNotes   string               `json:"group_notes,omitempty"`
+	ServiceFlags *SessionServiceFlags `json:"service_flags,omitempty"`
+	OpenedAt     int64                `json:"opened_at"`
+	ClosedAt     int64                `json:"closed_at,omitempty"`
+	UpdatedAt    int64                `json:"updated_at,omitempty"`
+	VenueID      string               `json:"venue_id,omitempty"`
 }
 
 // --- Kitchen: per line item (kitchen view: counts by dish × order) ---
@@ -43,15 +54,27 @@ const (
 	LineItemStatusCancelled = "cancelled"
 )
 
-// LineItem is one row on a ticket; each line has its own kitchen status.
+// UnitState is one fulfillable unit on a line item (mirrors UI unitStates[]).
+type UnitState struct {
+	Status       string `json:"status"` // UnitState*
+	CancelReason string `json:"cancel_reason,omitempty"`
+	CancelledAt  int64  `json:"cancelled_at,omitempty"`
+}
+
+// LineItem is one row on a ticket; kitchen progress is tracked per unit in unit_states.
 type LineItem struct {
-	ID           string            `json:"id"` // stable id for PATCH item status
+	ID           string            `json:"id"`
 	Name         string            `json:"name"`
+	MenuItemID   string            `json:"menu_item_id,omitempty"`
+	Category     string            `json:"category,omitempty"`
+	InternalName string            `json:"internal_name,omitempty"`
 	Quantity     int               `json:"quantity"`
-	Price        int64             `json:"price"`                   // paise (per line or per unit — document in API)
-	UserOverride *LineItemOverride `json:"user_override,omitempty"` // billing-time manual overrides
-	Removed      bool              `json:"removed,omitempty"`       // soft-remove line from billing/order
-	Status       string            `json:"status"`                  // LineItemStatus*
+	Price        int64             `json:"price"` // paise per unit
+	UnitStates   []UnitState       `json:"unit_states,omitempty"`
+	ParcelUnits  []bool            `json:"parcel_units,omitempty"`
+	UserOverride *LineItemOverride `json:"user_override,omitempty"`
+	Removed      bool              `json:"removed,omitempty"`
+	Status       string            `json:"status"` // aggregate LineItemStatus*; derived from unit_states
 }
 
 type LineItemV0 struct {
@@ -77,23 +100,25 @@ const (
 
 // Order is one ticket (kitchen + line items). Persisted as its own item; links to TableSession and optional Bill.
 type Order struct {
-	ID        string `json:"id"`
-	SessionID string `json:"session_id"`
-	VenueID   string `json:"venue_id"`          // denormalized for GSI_VenueOrdered
-	Channel   string `json:"channel"`           // OrderChannel*
-	BillID    string `json:"bill_id,omitempty"` // filled when session is in billing / bill linked
-	// SourceTableID attributes this order to one physical table when Session.TableIDs has many (optional).
+	ID            string     `json:"id"`
+	SessionID     string     `json:"session_id"`
+	VenueID       string     `json:"venue_id"`
+	Channel       string     `json:"channel"` // OrderChannel*; UI aliases table/delivery normalized on write
+	BillID        string     `json:"bill_id,omitempty"`
 	SourceTableID string     `json:"source_table_id,omitempty"`
 	CustomerID    string     `json:"customer_id,omitempty"`
+	CustomerName  string     `json:"customer_name,omitempty"`
+	CustomerPhone string     `json:"customer_phone,omitempty"`
 	StaffID       string     `json:"staff_id,omitempty"`
+	Notes         string     `json:"notes,omitempty"`
 	Items         []LineItem `json:"items"`
-	TotalPrice    int64      `json:"total_price"` // paise
-	// KitchenStatus is coarse order state (plating view, FIFO batches).
-	KitchenStatus string `json:"kitchen_status"` // KitchenStatus*
-	OrderedAt     int64  `json:"ordered_at"`     // Unix ms — FIFO sort key with table/session
-	ReadyAt       int64  `json:"ready_at,omitempty"`
-	CompletedAt   int64  `json:"completed_at,omitempty"`
-	UpdatedAt     int64  `json:"updated_at,omitempty"`
+	TotalPrice    int64      `json:"total_price"` // paise; billable units only
+	KitchenStatus string     `json:"kitchen_status"`
+	OrderedAt     int64      `json:"ordered_at"`
+	ReadyAt       int64      `json:"ready_at,omitempty"`
+	MarkedDoneAt  int64      `json:"marked_done_at,omitempty"` // waiter service done; locks edits
+	CompletedAt   int64      `json:"completed_at,omitempty"`   // kitchen served
+	UpdatedAt     int64      `json:"updated_at,omitempty"`
 }
 
 // Bill is created when the waiter starts closing the table (checkout); payment totals live here.
@@ -115,8 +140,10 @@ type Bill struct {
 	UpdatedAt              int64          `json:"updated_at"`
 	Discounts              []DiscountType `json:"discounts,omitempty"`
 	Taxes                  []TaxType      `json:"taxes,omitempty"`
+	SubtotalInPaise        int64          `json:"subtotal_in_paise"`
 	TotalTaxInPaise        int64          `json:"total_tax_in_paise"`
 	TotalDiscountInPaise   int64          `json:"total_discount_in_paise"`
+	StaffWelfareInPaise    int64          `json:"staff_welfare_in_paise,omitempty"`
 	TotalAmountInPaise     int64          `json:"total_amount_in_paise"`
 }
 
@@ -172,8 +199,21 @@ type KitchenDishCount struct {
 	OrderID    string `json:"order_id"`
 	LineItemID string `json:"line_item_id"`
 	Name       string `json:"name"`
+	Category   string `json:"category,omitempty"`
 	Quantity   int    `json:"quantity"`
-	Status     string `json:"status"` // LineItemStatus*
+	Status     string `json:"status"`
+}
+
+// KitchenUnitRow is one pending/fulfilled unit for FCFS kitchen board.
+type KitchenUnitRow struct {
+	OrderID     string `json:"order_id"`
+	LineItemID  string `json:"line_item_id"`
+	UnitIndex   int    `json:"unit_index"`
+	Name        string `json:"name"`
+	Category    string `json:"category,omitempty"`
+	UnitStatus  string `json:"unit_status"`
+	OrderedAt   int64  `json:"ordered_at"`
+	OrderLabel  string `json:"order_label,omitempty"`
 }
 
 // PlatingQueueOrder is a FIFO row for plating by table/session, including order items.
@@ -189,19 +229,36 @@ type PlatingQueueOrder struct {
 // --- Waiter flows ---
 
 type CreateSessionAndFirstOrderRequest struct {
-	TableIDs   []string   `json:"table_ids"` // one or more joined tables
-	Items      []LineItem `json:"items"`     // first ticket lines (ids can be server-generated)
-	Channel    string     `json:"channel"`   // OrderChannel*; dining_table for on-prem
-	CustomerID *string    `json:"customer_id,omitempty"`
-	StaffID    *string    `json:"staff_id,omitempty"`
-	OrderedAt  *int64     `json:"ordered_at,omitempty"`
+	TableIDs      []string              `json:"table_ids"`
+	Items         []LineItem            `json:"items"`
+	Channel       string                `json:"channel"`
+	Pax           *int                  `json:"pax,omitempty"`
+	GroupNotes    *string               `json:"group_notes,omitempty"`
+	ServiceFlags  *SessionServiceFlags  `json:"service_flags,omitempty"`
+	CustomerID    *string               `json:"customer_id,omitempty"`
+	CustomerName  *string               `json:"customer_name,omitempty"`
+	CustomerPhone *string               `json:"customer_phone,omitempty"`
+	Notes         *string               `json:"notes,omitempty"`
+	StaffID       *string               `json:"staff_id,omitempty"`
+	OrderedAt     *int64                `json:"ordered_at,omitempty"`
+}
+
+type UpdateSessionRequest struct {
+	SessionID    string               `json:"session_id"`
+	Pax          *int                 `json:"pax,omitempty"`
+	GroupNotes   *string              `json:"group_notes,omitempty"`
+	ServiceFlags *SessionServiceFlags `json:"service_flags,omitempty"`
+	TableIDs     []string             `json:"table_ids,omitempty"`
 }
 
 type AddOrderToSessionRequest struct {
 	SessionID     string     `json:"session_id"`
 	Items         []LineItem `json:"items"`
 	Channel       string     `json:"channel"`
-	SourceTableID *string    `json:"source_table_id,omitempty"` // when joined tables
+	SourceTableID *string    `json:"source_table_id,omitempty"`
+	CustomerName  *string    `json:"customer_name,omitempty"`
+	CustomerPhone *string    `json:"customer_phone,omitempty"`
+	Notes         *string    `json:"notes,omitempty"`
 	StaffID       *string    `json:"staff_id,omitempty"`
 	OrderedAt     *int64     `json:"ordered_at,omitempty"`
 }
@@ -209,15 +266,25 @@ type AddOrderToSessionRequest struct {
 type UpdateOrderRequestV2 struct {
 	OrderID           string     `json:"order_id"`
 	Items             []LineItem `json:"items,omitempty"`
+	Notes             *string    `json:"notes,omitempty"`
 	TotalPrice        *int64     `json:"total_price,omitempty"`
 	KitchenStatus     *string    `json:"kitchen_status,omitempty"`
+	MarkDone          *bool      `json:"mark_done,omitempty"`
 	RemoveLineItemIDs []string   `json:"remove_line_item_ids,omitempty"`
 }
 
 type PatchLineItemStatusRequest struct {
 	OrderID    string `json:"order_id"`
 	LineItemID string `json:"line_item_id"`
-	Status     string `json:"status"` // LineItemStatus*
+	Status     string `json:"status"` // LineItemStatus*; legacy whole-line update
+}
+
+type PatchLineItemUnitRequest struct {
+	OrderID      string `json:"order_id"`
+	LineItemID   string `json:"line_item_id"`
+	UnitIndex    int    `json:"unit_index"`
+	Action       string `json:"action"` // fulfill, unfulfill, cancel, toggle_parcel
+	CancelReason string `json:"cancel_reason,omitempty"`
 }
 
 type PatchOrderKitchenStatusRequestV2 struct {
@@ -235,10 +302,13 @@ type StartBillForSessionRequest struct {
 }
 
 type UpdateBillRequestV2 struct {
-	BillID          string               `json:"bill_id"`
-	PaymentMethod   *string              `json:"payment_method,omitempty"`
-	PaymentStatus   *string              `json:"payment_status,omitempty"`
-	LineItemUpdates []BillLineItemUpdate `json:"line_item_updates,omitempty"`
+	BillID              string               `json:"bill_id"`
+	PaymentMethod       *string              `json:"payment_method,omitempty"`
+	PaymentStatus       *string              `json:"payment_status,omitempty"`
+	Discounts           []DiscountType       `json:"discounts,omitempty"`
+	Taxes               []TaxType            `json:"taxes,omitempty"`
+	StaffWelfareInPaise *int64               `json:"staff_welfare_in_paise,omitempty"`
+	LineItemUpdates     []BillLineItemUpdate `json:"line_item_updates,omitempty"`
 }
 
 type GenerateInvoiceNumberRequest struct {

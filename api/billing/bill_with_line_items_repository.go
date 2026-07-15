@@ -26,7 +26,8 @@ func NewBillWithLineItemsRepository(db *dynamodb.Client) *BillWithLineItemsRepos
 
 func (r *BillWithLineItemsRepository) Get(ctx context.Context, id string) (*BillWithLineItems, error) {
 	out, err := r.db.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(TableNameBillsWithLineItems),
+		TableName:      aws.String(TableNameBillsWithLineItems),
+		ConsistentRead: aws.Bool(true),
 		Key: map[string]types.AttributeValue{
 			"id": &types.AttributeValueMemberS{Value: id},
 		},
@@ -94,8 +95,8 @@ func (r *BillWithLineItemsRepository) TransactCreate(
 	txItems := []types.TransactWriteItem{
 		{
 			Put: &types.Put{
-				TableName: aws.String(TableNameBillsWithLineItems),
-				Item:      item,
+				TableName:           aws.String(TableNameBillsWithLineItems),
+				Item:                item,
 				ConditionExpression: aws.String("attribute_not_exists(id)"),
 			},
 		},

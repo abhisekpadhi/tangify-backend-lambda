@@ -6,8 +6,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 // Clock generates ids and timestamps (implemented by main.CommonUtils).
@@ -43,44 +41,7 @@ func defaultVenueID() string {
 }
 
 func sumLineItems(items []LineItem) int64 {
-	var t int64
-	for _, li := range items {
-		if li.Removed {
-			continue
-		}
-		qty := li.Quantity
-		price := li.Price
-		if li.UserOverride != nil {
-			if li.UserOverride.Quantity != nil && *li.UserOverride.Quantity > 0 {
-				qty = *li.UserOverride.Quantity
-			}
-			if li.UserOverride.Price != nil {
-				price = *li.UserOverride.Price
-			}
-		}
-		t += price * int64(qty)
-	}
-	return t
-}
-
-func ensureLineItemIDs(items []LineItem) []LineItem {
-	out := make([]LineItem, len(items))
-	for i, li := range items {
-		out[i] = li
-		if out[i].ID == "" {
-			out[i].ID = PrefixLine + "_" + uuid.NewString()
-		}
-		if out[i].Status == "" {
-			out[i].Status = LineItemStatusPending
-		}
-	}
-	return out
-}
-
-func applyKitchenStatusToAllLineItems(items []LineItem, kitchenStatus string) {
-	for i := range items {
-		items[i].Status = kitchenStatus
-	}
+	return SumLineItems(items)
 }
 
 func tableInSession(tableIDs []string, tableID string) bool {
@@ -209,11 +170,20 @@ func (s *Service) CreateSessionAndFirstOrder(ctx context.Context, req CreateSess
 		UpdatedAt: now,
 		VenueID:   venueID,
 	}
+	if req.Pax != nil {
+		session.Pax = *req.Pax
+	}
+	if req.GroupNotes != nil {
+		session.GroupNotes = strings.TrimSpace(*req.GroupNotes)
+	}
+	if req.ServiceFlags != nil {
+		session.ServiceFlags = req.ServiceFlags
+	}
 	order := Order{
 		ID:            oid,
 		SessionID:     sid,
 		VenueID:       venueID,
-		Channel:       req.Channel,
+		Channel:       NormalizeChannel(req.Channel),
 		CustomerID:    cust,
 		StaffID:       st,
 		Items:         items,
@@ -221,6 +191,15 @@ func (s *Service) CreateSessionAndFirstOrder(ctx context.Context, req CreateSess
 		KitchenStatus: KitchenStatusPending,
 		OrderedAt:     orderedAt,
 		UpdatedAt:     now,
+	}
+	if req.CustomerName != nil {
+		order.CustomerName = strings.TrimSpace(*req.CustomerName)
+	}
+	if req.CustomerPhone != nil {
+		order.CustomerPhone = strings.TrimSpace(*req.CustomerPhone)
+	}
+	if req.Notes != nil {
+		order.Notes = strings.TrimSpace(*req.Notes)
 	}
 	if err := s.repo.PutSession(ctx, &session); err != nil {
 		return nil, err
@@ -269,7 +248,7 @@ func (s *Service) AddOrder(ctx context.Context, req AddOrderToSessionRequest, st
 		ID:            oid,
 		SessionID:     req.SessionID,
 		VenueID:       venueID,
-		Channel:       req.Channel,
+		Channel:       NormalizeChannel(req.Channel),
 		SourceTableID: src,
 		StaffID:       st,
 		Items:         items,
@@ -277,6 +256,15 @@ func (s *Service) AddOrder(ctx context.Context, req AddOrderToSessionRequest, st
 		KitchenStatus: KitchenStatusPending,
 		OrderedAt:     orderedAt,
 		UpdatedAt:     now,
+	}
+	if req.CustomerName != nil {
+		order.CustomerName = strings.TrimSpace(*req.CustomerName)
+	}
+	if req.CustomerPhone != nil {
+		order.CustomerPhone = strings.TrimSpace(*req.CustomerPhone)
+	}
+	if req.Notes != nil {
+		order.Notes = strings.TrimSpace(*req.Notes)
 	}
 	if sess.BillID != "" {
 		order.BillID = sess.BillID
@@ -291,6 +279,54 @@ func (s *Service) AddOrder(ctx context.Context, req AddOrderToSessionRequest, st
 	return &order, nil
 }
 
+// UpdateSession patches group-level session fields (pax, notes, service flags, tables).
+func (s *Service) UpdateSession(ctx context.Context, req UpdateSessionRequest, clock Clock) (*TableSession, error) {
+	if req.SessionID == "" {
+		return nil, fmt.Errorf("session_id required")
+	}
+	sess, err := s.repo.GetSession(ctx, req.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if sess == nil {
+		return nil, fmt.Errorf("session not found")
+	}
+	if sess.Status == SessionStatusClosed {
+		return nil, fmt.Errorf("session is closed")
+	}
+	if req.Pax != nil {
+		sess.Pax = *req.Pax
+	}
+	if req.GroupNotes != nil {
+		sess.GroupNotes = strings.TrimSpace(*req.GroupNotes)
+	}
+	if req.ServiceFlags != nil {
+		if sess.ServiceFlags == nil {
+			sess.ServiceFlags = &SessionServiceFlags{}
+		}
+		if req.ServiceFlags.WelcomeDrinkServed {
+			sess.ServiceFlags.WelcomeDrinkServed = true
+		}
+		if req.ServiceFlags.ComplementaryServed {
+			sess.ServiceFlags.ComplementaryServed = true
+		}
+		if req.ServiceFlags.KidMenuEnabled {
+			sess.ServiceFlags.KidMenuEnabled = true
+		}
+		if req.ServiceFlags.KidMenuServed {
+			sess.ServiceFlags.KidMenuServed = true
+		}
+	}
+	if len(req.TableIDs) > 0 {
+		sess.TableIDs = req.TableIDs
+	}
+	sess.UpdatedAt = clock.GetCurrentTimestamp()
+	if err := s.repo.PutSession(ctx, sess); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
 // UpdateOrderWithClock updates items / kitchen status on an order.
 func (s *Service) UpdateOrderWithClock(ctx context.Context, req UpdateOrderRequestV2, clock Clock) (*Order, error) {
 	o, err := s.repo.GetOrder(ctx, req.OrderID)
@@ -300,13 +336,29 @@ func (s *Service) UpdateOrderWithClock(ctx context.Context, req UpdateOrderReque
 	if o == nil {
 		return nil, fmt.Errorf("order not found")
 	}
+	if o.MarkedDoneAt != 0 {
+		return nil, fmt.Errorf("order is marked done and cannot be edited")
+	}
+	now := clock.GetCurrentTimestamp()
 	if len(req.Items) > 0 {
 		o.Items = ensureLineItemIDs(req.Items)
 		o.TotalPrice = sumLineItems(o.Items)
 	}
+	if req.Notes != nil {
+		o.Notes = strings.TrimSpace(*req.Notes)
+	}
 	if req.KitchenStatus != nil {
 		o.KitchenStatus = *req.KitchenStatus
 		applyKitchenStatusToAllLineItems(o.Items, *req.KitchenStatus)
+		if *req.KitchenStatus == KitchenStatusReady {
+			o.ReadyAt = now
+		}
+		if *req.KitchenStatus == KitchenStatusServed {
+			o.CompletedAt = now
+		}
+	}
+	if req.MarkDone != nil && *req.MarkDone {
+		o.MarkedDoneAt = now
 	}
 	if len(req.RemoveLineItemIDs) > 0 {
 		toRemove := make(map[string]struct{}, len(req.RemoveLineItemIDs))
@@ -318,15 +370,24 @@ func (s *Service) UpdateOrderWithClock(ctx context.Context, req UpdateOrderReque
 		for i := range o.Items {
 			if _, ok := toRemove[o.Items[i].ID]; ok {
 				o.Items[i].Removed = true
+				o.Items[i] = NormalizeLineItem(o.Items[i])
+				for j := range o.Items[i].UnitStates {
+					o.Items[i].UnitStates[j] = UnitState{
+						Status:       UnitStateCancelled,
+						CancelReason: CancelReasonManagerVoid,
+						CancelledAt:  now,
+					}
+				}
 				o.Items[i].Status = LineItemStatusCancelled
 			}
 		}
 		o.TotalPrice = sumLineItems(o.Items)
 	}
+	recomputeOrderKitchenState(o, now)
 	if req.TotalPrice != nil {
 		o.TotalPrice = *req.TotalPrice
 	}
-	o.UpdatedAt = clock.GetCurrentTimestamp()
+	o.UpdatedAt = now
 	if err := s.repo.PutOrder(ctx, o); err != nil {
 		return nil, err
 	}
@@ -424,6 +485,7 @@ func (s *Service) StartBill(ctx context.Context, req StartBillForSessionRequest,
 		}
 	}
 	bill.TotalAmountInPaise = total
+	bill.SubtotalInPaise = total
 	bill.UpdatedAt = clock.GetCurrentTimestamp()
 	if err := s.repo.PutBill(ctx, &bill); err != nil {
 		return nil, err
@@ -497,7 +559,17 @@ func (s *Service) UpdateBill(ctx context.Context, req UpdateBillRequestV2, clock
 	for i := range orders {
 		recomputedTotal += sumLineItems(orders[i].Items)
 	}
-	b.TotalAmountInPaise = recomputedTotal
+	b.SubtotalInPaise = recomputedTotal
+	if len(req.Discounts) > 0 {
+		b.Discounts = req.Discounts
+	}
+	if len(req.Taxes) > 0 {
+		b.Taxes = req.Taxes
+	}
+	if req.StaffWelfareInPaise != nil {
+		b.StaffWelfareInPaise = *req.StaffWelfareInPaise
+	}
+	recomputeBillPayable(b)
 	b.UpdatedAt = clock.GetCurrentTimestamp()
 	if err := s.repo.PutBill(ctx, b); err != nil {
 		return nil, err
@@ -545,19 +617,77 @@ func (s *Service) KitchenItemBoard(ctx context.Context, venueID string) ([]Kitch
 	if err != nil {
 		return nil, err
 	}
-	var rows []KitchenDishCount
+	pendingByKey := make(map[string]*KitchenDishCount)
 	for _, o := range orders {
+		if o.KitchenStatus == KitchenStatusServed || o.KitchenStatus == KitchenStatusCancelled {
+			continue
+		}
 		for _, li := range o.Items {
-			if li.Status == LineItemStatusServed || li.Status == LineItemStatusCancelled {
+			li = NormalizeLineItem(li)
+			pending := 0
+			for _, u := range li.UnitStates {
+				if u.Status == UnitStatePending {
+					pending++
+				}
+			}
+			if pending == 0 {
 				continue
 			}
-			rows = append(rows, KitchenDishCount{
-				OrderID:    o.ID,
-				LineItemID: li.ID,
-				Name:       li.Name,
-				Quantity:   li.Quantity,
-				Status:     li.Status,
-			})
+			key := o.ID + "::" + li.ID
+			row, ok := pendingByKey[key]
+			if !ok {
+				pendingByKey[key] = &KitchenDishCount{
+					OrderID:    o.ID,
+					LineItemID: li.ID,
+					Name:       li.Name,
+					Category:   li.Category,
+					Quantity:   pending,
+					Status:     LineItemStatusPending,
+				}
+				continue
+			}
+			row.Quantity += pending
+		}
+	}
+	rows := make([]KitchenDishCount, 0, len(pendingByKey))
+	for _, row := range pendingByKey {
+		rows = append(rows, *row)
+	}
+	return rows, nil
+}
+
+// KitchenUnitBoard returns one row per pending unit for FCFS kitchen fulfillment.
+func (s *Service) KitchenUnitBoard(ctx context.Context, venueID string) ([]KitchenUnitRow, error) {
+	if venueID == "" {
+		venueID = defaultVenueID()
+	}
+	orders, err := s.repo.QueryOrdersByVenue(ctx, venueID, 500)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(orders, func(i, j int) bool { return orders[i].OrderedAt < orders[j].OrderedAt })
+	var rows []KitchenUnitRow
+	for _, o := range orders {
+		if o.KitchenStatus == KitchenStatusServed || o.KitchenStatus == KitchenStatusCancelled {
+			continue
+		}
+		for _, li := range o.Items {
+			li = NormalizeLineItem(li)
+			for idx, u := range li.UnitStates {
+				if u.Status != UnitStatePending {
+					continue
+				}
+				rows = append(rows, KitchenUnitRow{
+					OrderID:    o.ID,
+					LineItemID: li.ID,
+					UnitIndex:  idx,
+					Name:       li.Name,
+					Category:   li.Category,
+					UnitStatus: u.Status,
+					OrderedAt:  o.OrderedAt,
+					OrderLabel: o.ID,
+				})
+			}
 		}
 	}
 	return rows, nil
@@ -573,16 +703,102 @@ func (s *Service) PatchLineItemStatus(ctx context.Context, req PatchLineItemStat
 	}
 	found := false
 	for i := range o.Items {
-		if o.Items[i].ID == req.LineItemID {
-			o.Items[i].Status = req.Status
-			found = true
-			break
+		if o.Items[i].ID != req.LineItemID {
+			continue
 		}
+		found = true
+		o.Items[i] = NormalizeLineItem(o.Items[i])
+		for j := range o.Items[i].UnitStates {
+			switch req.Status {
+			case LineItemStatusCancelled:
+				o.Items[i].UnitStates[j] = UnitState{Status: UnitStateCancelled, CancelReason: CancelReasonManagerVoid}
+			case LineItemStatusReady, LineItemStatusServed:
+				if o.Items[i].UnitStates[j].Status != UnitStateCancelled {
+					o.Items[i].UnitStates[j].Status = UnitStateFulfilled
+				}
+			default:
+				if o.Items[i].UnitStates[j].Status != UnitStateCancelled {
+					o.Items[i].UnitStates[j].Status = UnitStatePending
+				}
+			}
+		}
+		o.Items[i].Status = aggregateLineStatus(o.Items[i].UnitStates)
+		break
 	}
 	if !found {
 		return nil, fmt.Errorf("line item not found")
 	}
-	o.UpdatedAt = clock.GetCurrentTimestamp()
+	now := clock.GetCurrentTimestamp()
+	recomputeOrderKitchenState(o, now)
+	o.UpdatedAt = now
+	if err := s.repo.PutOrder(ctx, o); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+func (s *Service) PatchLineItemUnit(ctx context.Context, req PatchLineItemUnitRequest, clock Clock) (*Order, error) {
+	if req.OrderID == "" || req.LineItemID == "" || req.UnitIndex < 0 {
+		return nil, fmt.Errorf("order_id, line_item_id, and unit_index required")
+	}
+	o, err := s.repo.GetOrder(ctx, req.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	if o == nil {
+		return nil, fmt.Errorf("order not found")
+	}
+	if o.MarkedDoneAt != 0 {
+		return nil, fmt.Errorf("order is marked done and cannot be edited")
+	}
+	found := false
+	now := clock.GetCurrentTimestamp()
+	for i := range o.Items {
+		if o.Items[i].ID != req.LineItemID {
+			continue
+		}
+		found = true
+		o.Items[i] = NormalizeLineItem(o.Items[i])
+		if req.UnitIndex >= len(o.Items[i].UnitStates) {
+			return nil, fmt.Errorf("unit_index out of range")
+		}
+		switch req.Action {
+		case "fulfill":
+			if o.Items[i].UnitStates[req.UnitIndex].Status != UnitStateCancelled {
+				o.Items[i].UnitStates[req.UnitIndex].Status = UnitStateFulfilled
+			}
+		case "unfulfill":
+			if o.Items[i].UnitStates[req.UnitIndex].Status == UnitStateFulfilled {
+				o.Items[i].UnitStates[req.UnitIndex].Status = UnitStatePending
+			}
+		case "cancel":
+			reason := req.CancelReason
+			if reason == "" {
+				reason = CancelReasonWaiterCancel
+			}
+			if !validCancelReason(reason) {
+				return nil, fmt.Errorf("invalid cancel_reason")
+			}
+			o.Items[i].UnitStates[req.UnitIndex] = UnitState{
+				Status:       UnitStateCancelled,
+				CancelReason: reason,
+				CancelledAt:  now,
+			}
+		case "toggle_parcel":
+			o.Items[i].ParcelUnits = padParcelUnits(o.Items[i].ParcelUnits, o.Items[i].Quantity)
+			o.Items[i].ParcelUnits[req.UnitIndex] = !o.Items[i].ParcelUnits[req.UnitIndex]
+		default:
+			return nil, fmt.Errorf("unknown action: %s", req.Action)
+		}
+		o.Items[i].Status = aggregateLineStatus(o.Items[i].UnitStates)
+		break
+	}
+	if !found {
+		return nil, fmt.Errorf("line item not found")
+	}
+	o.TotalPrice = sumLineItems(o.Items)
+	recomputeOrderKitchenState(o, now)
+	o.UpdatedAt = now
 	if err := s.repo.PutOrder(ctx, o); err != nil {
 		return nil, err
 	}

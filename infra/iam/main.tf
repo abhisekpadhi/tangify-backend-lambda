@@ -1,6 +1,6 @@
 terraform {
   required_version = ">= 1.0"
-  
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -62,7 +62,8 @@ resource "aws_iam_role_policy" "tangify_backend_lambda_policy" {
           "dynamodb:Query",
           "dynamodb:Scan",
           "dynamodb:BatchGetItem",
-          "dynamodb:BatchWriteItem"
+          "dynamodb:BatchWriteItem",
+          "dynamodb:TransactWriteItems"
         ]
         Resource = [
           "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/*"
