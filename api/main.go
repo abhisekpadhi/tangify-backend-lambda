@@ -269,13 +269,16 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 	}
 
 	billingService := billing.NewService(billRepo)
+	billingEnvironment := "production"
 	billsWithLineItemsTable := billing.TableNameBillsWithLineItems
 	if strings.EqualFold(
 		strings.TrimSpace(request.Headers["x-tangify-environment"]),
 		"dev",
 	) {
+		billingEnvironment = "dev"
 		billsWithLineItemsTable = billing.DevTableNameBillsWithLineItems
 	}
+	invoiceWorkerURL := billing.ResolveInvoiceWorkerURL(billingEnvironment)
 	billsWithLineItemsRepo := billing.NewBillWithLineItemsRepository(
 		dynamoDBClient,
 		billsWithLineItemsTable,
@@ -283,6 +286,7 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 	billsWithLineItemsService := billing.NewBillWithLineItemsService(
 		billsWithLineItemsRepo,
 		loyalty.NewWalletProvider(loyaltyRepo),
+		invoiceWorkerURL,
 	)
 	staffID := staffIDFromContext(appContext)
 
@@ -466,7 +470,7 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 			return ApiResponse.Error(http.StatusNotFound, "bill not found"), nil
 		}
 
-		workerResp, err := fetchInvoiceNumber(ctx, body.BillID)
+		workerResp, err := fetchInvoiceNumber(ctx, body.BillID, invoiceWorkerURL)
 		if err != nil {
 			return ApiResponse.Error(http.StatusBadGateway, err.Error()), nil
 		}

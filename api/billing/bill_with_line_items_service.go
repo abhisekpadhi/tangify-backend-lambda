@@ -8,12 +8,21 @@ import (
 )
 
 type BillWithLineItemsService struct {
-	repo   *BillWithLineItemsRepository
-	wallet PointsWalletProvider
+	repo             *BillWithLineItemsRepository
+	wallet           PointsWalletProvider
+	invoiceWorkerURL string
 }
 
-func NewBillWithLineItemsService(repo *BillWithLineItemsRepository, wallet PointsWalletProvider) *BillWithLineItemsService {
-	return &BillWithLineItemsService{repo: repo, wallet: wallet}
+func NewBillWithLineItemsService(
+	repo *BillWithLineItemsRepository,
+	wallet PointsWalletProvider,
+	invoiceWorkerURL string,
+) *BillWithLineItemsService {
+	return &BillWithLineItemsService{
+		repo:             repo,
+		wallet:           wallet,
+		invoiceWorkerURL: strings.TrimSpace(invoiceWorkerURL),
+	}
 }
 
 func (s *BillWithLineItemsService) Get(ctx context.Context, billID string) (*BillWithLineItems, error) {
@@ -93,7 +102,7 @@ func (s *BillWithLineItemsService) create(
 	// checkout state makes concurrent clients and ambiguous retries converge on
 	// the same invoice number.
 	workerBillID := invoiceWorkerBillID(stateKey)
-	inv, err := FetchInvoiceNumber(ctx, workerBillID)
+	inv, err := FetchInvoiceNumberWithURL(ctx, workerBillID, s.invoiceWorkerURL)
 	if err != nil {
 		return nil, err
 	}

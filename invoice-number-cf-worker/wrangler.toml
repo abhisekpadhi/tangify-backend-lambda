@@ -9,3 +9,16 @@ class_name = "InvoiceYearCounter"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["InvoiceYearCounter"]
+
+# Dev worker uses a separate Durable Object namespace so local/testing
+# does not consume production invoice sequence numbers.
+[env.dev]
+name = "invoice-number-cf-worker-dev"
+
+[[env.dev.durable_objects.bindings]]
+name = "INVOICE_COUNTER"
+class_name = "InvoiceYearCounter"
+
+[[env.dev.migrations]]
+tag = "v1"
+new_sqlite_classes = ["InvoiceYearCounter"]

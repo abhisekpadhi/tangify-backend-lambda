@@ -1,0 +1,22 @@
+meta {
+  name: cloudflare - invoice no (dev)
+  type: http
+  seq: 4
+}
+
+post {
+  url: https://invoice-number-cf-worker-dev.subnub.workers.dev/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "bill_id": "bill_dev_test_001"
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

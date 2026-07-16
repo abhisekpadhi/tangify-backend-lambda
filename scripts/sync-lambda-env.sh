@@ -46,6 +46,12 @@ fi
 if [[ -n "${ABLY_KEY:-}" ]]; then
   vars+=("ABLY_KEY=${ABLY_KEY}")
 fi
+if [[ -n "${INVOICE_NUMBER_WORKER_URL_PROD:-}" ]]; then
+  vars+=("INVOICE_NUMBER_WORKER_URL_PROD=${INVOICE_NUMBER_WORKER_URL_PROD}")
+fi
+if [[ -n "${INVOICE_NUMBER_WORKER_URL_DEV:-}" ]]; then
+  vars+=("INVOICE_NUMBER_WORKER_URL_DEV=${INVOICE_NUMBER_WORKER_URL_DEV}")
+fi
 
 joined=$(IFS=, ; echo "${vars[*]}")
 

@@ -6,8 +6,12 @@ import (
 	"tangify-backend-lambda/billing"
 )
 
-func fetchInvoiceNumber(ctx context.Context, billID string) (*invoiceNumberWorkerResponse, error) {
-	resp, err := billing.FetchInvoiceNumber(ctx, billID)
+func fetchInvoiceNumber(
+	ctx context.Context,
+	billID string,
+	workerURL string,
+) (*invoiceNumberWorkerResponse, error) {
+	resp, err := billing.FetchInvoiceNumberWithURL(ctx, billID, workerURL)
 	if err != nil {
 		return nil, err
 	}
