@@ -34,8 +34,8 @@ If `bill_id` already has an invoice, the worker returns the existing mapping (id
 
 Lambda selects the worker URL from request environment:
 
-- Header `X-Tangify-Environment: dev` → dev worker + `dev-tangify_bills_with_line_items` DynamoDB table
-- Otherwise → prod worker + `tangify_bills_with_line_items`
+- Header `X-Tangify-Environment: dev` → dev worker + `dev-tangify_bills_with_line_items` + `dev-tangify_points_wallet`
+- Otherwise → prod worker + `tangify_bills_with_line_items` + `tangify_points_wallet`
 
 Required Lambda env vars:
 

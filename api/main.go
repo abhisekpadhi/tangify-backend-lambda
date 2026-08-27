@@ -168,12 +168,24 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 		return ApiResponse.Error(http.StatusInternalServerError, "Server error: Failed to get JWT secret"), nil
 	}
 
+	billingEnvironment := "production"
+	billsWithLineItemsTable := billing.TableNameBillsWithLineItems
+	pointsWalletTable := loyalty.TableNamePointsWallet
+	if strings.EqualFold(
+		strings.TrimSpace(request.Headers["x-tangify-environment"]),
+		"dev",
+	) {
+		billingEnvironment = "dev"
+		billsWithLineItemsTable = billing.DevTableNameBillsWithLineItems
+		pointsWalletTable = loyalty.DevTableNamePointsWallet
+	}
+
 	usersService := users.NewService(users.NewRepository(dynamoDBClient), func(userID, name, role string) (string, error) {
 		j := NewJwtUtils(jwtSecret)
 		return j.GenerateJWT(userID, name, role, 24*time.Hour)
 	})
 	billRepo := billing.NewRepository(dynamoDBClient)
-	loyaltyRepo := loyalty.NewRepository(dynamoDBClient)
+	loyaltyRepo := loyalty.NewRepository(dynamoDBClient, pointsWalletTable)
 	loyaltyService := loyalty.NewService(loyaltyRepo, billRepo)
 
 	if method == "POST" && route == "/api/v1/auth/login" {
@@ -269,24 +281,18 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 	}
 
 	billingService := billing.NewService(billRepo)
-	billingEnvironment := "production"
-	billsWithLineItemsTable := billing.TableNameBillsWithLineItems
-	if strings.EqualFold(
-		strings.TrimSpace(request.Headers["x-tangify-environment"]),
-		"dev",
-	) {
-		billingEnvironment = "dev"
-		billsWithLineItemsTable = billing.DevTableNameBillsWithLineItems
-	}
 	invoiceWorkerURL := billing.ResolveInvoiceWorkerURL(billingEnvironment)
 	billsWithLineItemsRepo := billing.NewBillWithLineItemsRepository(
 		dynamoDBClient,
 		billsWithLineItemsTable,
 	)
+	walletProvider := loyalty.NewWalletProvider(loyaltyRepo, usersService)
 	billsWithLineItemsService := billing.NewBillWithLineItemsService(
 		billsWithLineItemsRepo,
-		loyalty.NewWalletProvider(loyaltyRepo),
+		walletProvider,
 		invoiceWorkerURL,
+		gupshupLoyaltyNotifier{},
+		pointsWalletTable,
 	)
 	staffID := staffIDFromContext(appContext)
 
@@ -508,6 +514,15 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 		}
 		if data == nil {
 			return ApiResponse.Error(http.StatusNotFound, "bill not found"), nil
+		}
+		return ApiResponse.Success(data), nil
+	}
+
+	if method == "GET" && route == "/api/v1/loyalty/wallet" {
+		phone := queryParam(request, "phone")
+		data, err := walletProvider.GetOrCreateByPhone(ctx, phone, commonUtils.GetCurrentTimestamp())
+		if err != nil {
+			return ApiResponse.Error(http.StatusBadRequest, err.Error()), nil
 		}
 		return ApiResponse.Success(data), nil
 	}

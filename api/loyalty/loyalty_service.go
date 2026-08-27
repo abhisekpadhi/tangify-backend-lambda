@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	earnPointsPerSpendPaise = int64(25000) // Rs 250
-	earnPointsAmount        = int64(10)
-	redeemBlockPoints       = int64(100)
-	defaultDiscountPaise    = int64(25000) // Rs 250
+	earnPointsPerSpendPaise = int64(5000) // Rs 50
+	earnPointsAmount        = int64(1)
+	redeemBlockPoints       = int64(1)
+	defaultDiscountPaise    = int64(300) // Rs 3 per point
 	loyaltyDiscountID       = "loyalty"
 	loyaltyDiscountType     = "loyalty"
 )
@@ -31,7 +31,7 @@ func NewService(repo *Repository, billRepo *billing.Repository) *Service {
 func discountPer100Points() int64 {
 	raw := strings.TrimSpace(os.Getenv("LOYALTY_DISCOUNT_PER_100_POINTS_PAISE"))
 	if raw == "" {
-		return defaultDiscountPaise
+		return billing.PaisePerPoint
 	}
 	v, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || v <= 0 {

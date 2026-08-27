@@ -2,6 +2,9 @@ package loyalty
 
 const TableNamePointsWallet = "tangify_points_wallet"
 
+// DevTableNamePointsWallet is used when X-Tangify-Environment: dev.
+const DevTableNamePointsWallet = "dev-tangify_points_wallet"
+
 type PointsWallet struct {
 	UserID           string `json:"user_id"`
 	PointsBalance    int64  `json:"points_balance"`

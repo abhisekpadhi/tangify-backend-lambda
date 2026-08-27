@@ -44,6 +44,9 @@ The API expects these DynamoDB tables:
 - `tangify_bills`
 - `tangify_bills_with_line_items` (production bills with line items)
 - `dev-tangify_bills_with_line_items` (dev bills — used when `X-Tangify-Environment: dev`)
+- `tangify_points_wallet` (production loyalty balances)
+- `dev-tangify_points_wallet` (dev loyalty balances — used when `X-Tangify-Environment: dev`)
+- `tangify_phone_otp`
 
 Create them from repo root:
 
@@ -104,10 +107,10 @@ Workers live in `invoice-number-cf-worker/`. See that README for deploy and smok
 
 Environment routing:
 
-| `X-Tangify-Environment` | Invoice worker | DynamoDB table |
-|-------------------------|----------------|----------------|
-| `dev` | `invoice-number-cf-worker-dev` | `dev-tangify_bills_with_line_items` |
-| (default / production) | `invoice-number-cf-worker` | `tangify_bills_with_line_items` |
+| `X-Tangify-Environment` | Invoice worker | Bills table | Points wallet |
+|-------------------------|----------------|-------------|---------------|
+| `dev` | `invoice-number-cf-worker-dev` | `dev-tangify_bills_with_line_items` | `dev-tangify_points_wallet` |
+| (default / production) | `invoice-number-cf-worker` | `tangify_bills_with_line_items` | `tangify_points_wallet` |
 
 Deploy dev worker:
 

@@ -11,16 +11,21 @@ import (
 )
 
 type Repository struct {
-	db *dynamodb.Client
+	db        *dynamodb.Client
+	tableName string
 }
 
-func NewRepository(db *dynamodb.Client) *Repository {
-	return &Repository{db: db}
+func NewRepository(db *dynamodb.Client, tableName ...string) *Repository {
+	name := TableNamePointsWallet
+	if len(tableName) > 0 && tableName[0] != "" {
+		name = tableName[0]
+	}
+	return &Repository{db: db, tableName: name}
 }
 
 func (r *Repository) GetWallet(ctx context.Context, userID string) (*PointsWallet, error) {
 	out, err := r.db.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(TableNamePointsWallet),
+		TableName: aws.String(r.tableName),
 		Key: map[string]types.AttributeValue{
 			"user_id": &types.AttributeValueMemberS{Value: userID},
 		},
@@ -46,7 +51,7 @@ func (r *Repository) PutWallet(ctx context.Context, w *PointsWallet) error {
 		"updated_at":        &types.AttributeValueMemberN{Value: strconv.FormatInt(w.UpdatedAt, 10)},
 	}
 	_, err := r.db.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(TableNamePointsWallet),
+		TableName: aws.String(r.tableName),
 		Item:      item,
 	})
 	return err

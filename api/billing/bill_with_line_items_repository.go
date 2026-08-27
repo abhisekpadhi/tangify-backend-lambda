@@ -10,9 +10,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
-// PointsWalletProvider reads and deducts loyalty points (implemented by loyalty package).
+// PointsWalletProvider reads loyalty points (implemented by loyalty package).
 type PointsWalletProvider interface {
 	GetPointsBalance(ctx context.Context, userID string) (int64, error)
+	ResolvePhone(ctx context.Context, phone string, now int64) (*ResolvedLoyaltyCustomer, error)
+}
+
+// ResolvedLoyaltyCustomer is a phone lookup that creates an empty wallet if needed.
+type ResolvedLoyaltyCustomer struct {
+	UserID        string
+	Phone         string
+	PointsBalance int64
 }
 
 // BillWithLineItemsRepository persists bill snapshots with embedded line items.
@@ -85,14 +93,17 @@ func (r *BillWithLineItemsRepository) Put(ctx context.Context, bill *BillWithLin
 	return err
 }
 
-// TransactCreate saves a new bill and optionally deducts loyalty points in one transaction.
-func (r *BillWithLineItemsRepository) TransactCreate(
+// TransactWrite puts a bill and optionally credits/debits the wallet in one transaction.
+// create: fail if the bill id already exists. settle: fail if loyalty_points_processed is already set.
+func (r *BillWithLineItemsRepository) TransactWrite(
 	ctx context.Context,
 	bill *BillWithLineItems,
 	walletUserID string,
 	pointsToRedeem int64,
+	pointsToEarn int64,
 	walletTableName string,
 	now int64,
+	create bool,
 ) error {
 	if bill == nil {
 		return fmt.Errorf("bill is nil")
@@ -102,19 +113,35 @@ func (r *BillWithLineItemsRepository) TransactCreate(
 		return err
 	}
 
+	cond := "attribute_not_exists(id)"
+	if !create {
+		cond = "attribute_not_exists(loyalty_points_processed)"
+	}
+
 	txItems := []types.TransactWriteItem{
 		{
 			Put: &types.Put{
 				TableName:           aws.String(r.tableName),
 				Item:                item,
-				ConditionExpression: aws.String("attribute_not_exists(id)"),
+				ConditionExpression: aws.String(cond),
 			},
 		},
 	}
 
-	if pointsToRedeem > 0 {
+	if pointsToRedeem > 0 || pointsToEarn > 0 {
 		if walletUserID == "" {
-			return fmt.Errorf("wallet user id required when redeeming points")
+			return fmt.Errorf("wallet user id required when moving points")
+		}
+		updateExpr := "SET points_balance = points_balance - :redeem + :earn, updated_at = :now"
+		if pointsToRedeem > 0 {
+			updateExpr += ", lifetime_redeemed = if_not_exists(lifetime_redeemed, :zero) + :redeem"
+		}
+		if pointsToEarn > 0 {
+			updateExpr += ", lifetime_earned = if_not_exists(lifetime_earned, :zero) + :earn"
+		}
+		condWallet := "attribute_exists(user_id)"
+		if pointsToRedeem > 0 {
+			condWallet += " AND points_balance >= :redeem"
 		}
 		txItems = append(txItems, types.TransactWriteItem{
 			Update: &types.Update{
@@ -122,14 +149,13 @@ func (r *BillWithLineItemsRepository) TransactCreate(
 				Key: map[string]types.AttributeValue{
 					"user_id": &types.AttributeValueMemberS{Value: walletUserID},
 				},
-				UpdateExpression: aws.String(
-					"SET points_balance = points_balance - :pts, lifetime_redeemed = if_not_exists(lifetime_redeemed, :zero) + :pts, updated_at = :now",
-				),
-				ConditionExpression: aws.String("points_balance >= :pts"),
+				UpdateExpression:    aws.String(updateExpr),
+				ConditionExpression: aws.String(condWallet),
 				ExpressionAttributeValues: map[string]types.AttributeValue{
-					":pts":  &types.AttributeValueMemberN{Value: strconv.FormatInt(pointsToRedeem, 10)},
-					":zero": &types.AttributeValueMemberN{Value: "0"},
-					":now":  &types.AttributeValueMemberN{Value: strconv.FormatInt(now, 10)},
+					":redeem": &types.AttributeValueMemberN{Value: strconv.FormatInt(pointsToRedeem, 10)},
+					":earn":   &types.AttributeValueMemberN{Value: strconv.FormatInt(pointsToEarn, 10)},
+					":zero":   &types.AttributeValueMemberN{Value: "0"},
+					":now":    &types.AttributeValueMemberN{Value: strconv.FormatInt(now, 10)},
 				},
 			},
 		})
@@ -139,6 +165,17 @@ func (r *BillWithLineItemsRepository) TransactCreate(
 		TransactItems: txItems,
 	})
 	return err
+}
+
+func (r *BillWithLineItemsRepository) TransactCreate(
+	ctx context.Context,
+	bill *BillWithLineItems,
+	walletUserID string,
+	pointsToRedeem int64,
+	walletTableName string,
+	now int64,
+) error {
+	return r.TransactWrite(ctx, bill, walletUserID, pointsToRedeem, 0, walletTableName, now, true)
 }
 
 func encodeBillWithLineItems(b *BillWithLineItems) (map[string]types.AttributeValue, error) {
@@ -196,6 +233,21 @@ func encodeBillWithLineItems(b *BillWithLineItems) (map[string]types.AttributeVa
 	if b.StateKey != "" {
 		m["state_key"] = &types.AttributeValueMemberS{Value: b.StateKey}
 	}
+	if b.Settled {
+		m["settled"] = &types.AttributeValueMemberBOOL{Value: true}
+	}
+	if b.SettledAt != 0 {
+		m["settled_at"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(b.SettledAt, 10)}
+	}
+	if b.LoyaltyPointsProcessed {
+		m["loyalty_points_processed"] = &types.AttributeValueMemberBOOL{Value: true}
+	}
+	if b.LoyaltyPointsEarned != 0 {
+		m["loyalty_points_earned"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(b.LoyaltyPointsEarned, 10)}
+	}
+	if b.LoyaltyPointsRedeemed != 0 {
+		m["loyalty_points_redeemed"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(b.LoyaltyPointsRedeemed, 10)}
+	}
 	return m, nil
 }
 
@@ -227,6 +279,15 @@ func decodeBillWithLineItems(item map[string]types.AttributeValue) (*BillWithLin
 	b.TotalTaxInPaise, _ = numAttr(item, "total_tax_in_paise")
 	b.TotalDiscountInPaise, _ = numAttr(item, "total_discount_in_paise")
 	b.TotalAmountInPaise, _ = numAttr(item, "total_amount_in_paise")
+	if v, ok := item["settled"].(*types.AttributeValueMemberBOOL); ok {
+		b.Settled = v.Value
+	}
+	b.SettledAt, _ = numAttr(item, "settled_at")
+	if v, ok := item["loyalty_points_processed"].(*types.AttributeValueMemberBOOL); ok {
+		b.LoyaltyPointsProcessed = v.Value
+	}
+	b.LoyaltyPointsEarned, _ = numAttr(item, "loyalty_points_earned")
+	b.LoyaltyPointsRedeemed, _ = numAttr(item, "loyalty_points_redeemed")
 
 	if l, ok := item["table_ids"].(*types.AttributeValueMemberL); ok {
 		for _, e := range l.Value {

@@ -5,23 +5,40 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"strings"
+
+	"tangify-backend-lambda/users"
 )
 
+type LoyaltyNotifier interface {
+	NotifyPointsRedeemed(ctx context.Context, phone string, points, balance int64)
+	NotifyPointsEarned(ctx context.Context, phone string, points, balance int64)
+}
+
 type BillWithLineItemsService struct {
-	repo             *BillWithLineItemsRepository
-	wallet           PointsWalletProvider
-	invoiceWorkerURL string
+	repo              *BillWithLineItemsRepository
+	wallet            PointsWalletProvider
+	invoiceWorkerURL  string
+	notifier          LoyaltyNotifier
+	pointsWalletTable string
 }
 
 func NewBillWithLineItemsService(
 	repo *BillWithLineItemsRepository,
 	wallet PointsWalletProvider,
 	invoiceWorkerURL string,
+	notifier LoyaltyNotifier,
+	pointsWalletTable string,
 ) *BillWithLineItemsService {
+	table := strings.TrimSpace(pointsWalletTable)
+	if table == "" {
+		table = "tangify_points_wallet"
+	}
 	return &BillWithLineItemsService{
-		repo:             repo,
-		wallet:           wallet,
-		invoiceWorkerURL: strings.TrimSpace(invoiceWorkerURL),
+		repo:              repo,
+		wallet:            wallet,
+		invoiceWorkerURL:  strings.TrimSpace(invoiceWorkerURL),
+		notifier:          notifier,
+		pointsWalletTable: table,
 	}
 }
 
@@ -51,11 +68,35 @@ func (s *BillWithLineItemsService) Upsert(
 	return s.create(ctx, req, stateKey, staffID, now)
 }
 
-const pointsWalletTableName = "tangify_points_wallet"
-
 func invoiceWorkerBillID(stateKey string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(stateKey)))
 	return fmt.Sprintf("%s_state_%x", PrefixBill, sum[:16])
+}
+
+func (s *BillWithLineItemsService) resolveCustomer(
+	ctx context.Context,
+	raw string,
+	now int64,
+) (userID, phone string, balance int64, err error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", 0, nil
+	}
+	if s.wallet == nil {
+		return raw, raw, 0, nil
+	}
+	if _, canonErr := users.CanonicalPhone(raw); canonErr == nil {
+		resolved, resErr := s.wallet.ResolvePhone(ctx, raw, now)
+		if resErr != nil {
+			return "", "", 0, resErr
+		}
+		return resolved.UserID, resolved.Phone, resolved.PointsBalance, nil
+	}
+	bal, balErr := s.wallet.GetPointsBalance(ctx, raw)
+	if balErr != nil {
+		return "", "", 0, balErr
+	}
+	return raw, raw, bal, nil
 }
 
 func (s *BillWithLineItemsService) create(
@@ -73,23 +114,16 @@ func (s *BillWithLineItemsService) create(
 		return existing, nil
 	}
 
-	var pointsBalance int64
-	if hasPointsDiscount(req.Discounts) {
-		customerID := strings.TrimSpace(req.CustomerID)
-		if customerID == "" {
-			return nil, errCustomerIDRequiredForPoints
-		}
-		pointsBalance, err = s.wallet.GetPointsBalance(ctx, customerID)
-		if err != nil {
-			return nil, err
-		}
+	userID, phone, pointsBalance, err := s.resolveCustomer(ctx, req.CustomerID, now)
+	if err != nil {
+		return nil, err
 	}
 
 	totals, err := computeBillTotals(
 		req.LineItems,
 		req.Discounts,
 		req.Taxes,
-		req.CustomerID,
+		phone,
 		pointsBalance,
 		false,
 		nil,
@@ -98,9 +132,6 @@ func (s *BillWithLineItemsService) create(
 		return nil, err
 	}
 
-	// The invoice worker is idempotent by bill_id. Deriving that key from the
-	// checkout state makes concurrent clients and ambiguous retries converge on
-	// the same invoice number.
 	workerBillID := invoiceWorkerBillID(stateKey)
 	inv, err := FetchInvoiceNumberWithURL(ctx, workerBillID, s.invoiceWorkerURL)
 	if err != nil {
@@ -116,6 +147,9 @@ func (s *BillWithLineItemsService) create(
 	bill.TotalDiscountInPaise = totals.TotalDiscountInPaise
 	bill.TotalTaxInPaise = totals.TotalTaxInPaise
 	bill.TotalAmountInPaise = totals.TotalAmountInPaise
+	if phone != "" {
+		bill.CustomerID = phone
+	}
 	if bill.PaymentMethod == "" {
 		bill.PaymentMethod = PaymentMethodCash
 	}
@@ -123,23 +157,40 @@ func (s *BillWithLineItemsService) create(
 		bill.PaymentStatus = PaymentStatusPending
 	}
 
-	err = s.repo.TransactCreate(
+	redeem := totals.PointsRedeemed
+	var earn int64
+	if req.Settled && phone != "" {
+		earn = PointsEarnedFromDiscountedSubtotal(
+			lineItemsSubtotalPaise(req.LineItems),
+			totals.TotalDiscountInPaise,
+		)
+		bill.Settled = true
+		bill.SettledAt = now
+		bill.LoyaltyPointsProcessed = true
+		bill.LoyaltyPointsEarned = earn
+	}
+	if redeem > 0 {
+		bill.LoyaltyPointsRedeemed = redeem
+	}
+
+	err = s.repo.TransactWrite(
 		ctx,
 		bill,
-		strings.TrimSpace(req.CustomerID),
-		totals.PointsRedeemed,
-		pointsWalletTableName,
+		userID,
+		redeem,
+		earn,
+		s.pointsWalletTable,
 		now,
+		true,
 	)
 	if err != nil {
-		// A concurrent request with the same state key receives the same invoice
-		// number. Its conditional put can lose the race, so return the winner.
 		existing, getErr := s.repo.Get(ctx, inv.InvoiceNumber)
 		if getErr == nil && existing != nil && existing.StateKey == stateKey {
 			return existing, nil
 		}
 		return nil, err
 	}
+	s.notifyWallet(ctx, phone, pointsBalance, redeem, earn)
 	return bill, nil
 }
 
@@ -180,6 +231,11 @@ func (s *BillWithLineItemsService) update(
 	bill.TotalDiscountInPaise = totals.TotalDiscountInPaise
 	bill.TotalTaxInPaise = totals.TotalTaxInPaise
 	bill.TotalAmountInPaise = totals.TotalAmountInPaise
+	bill.Settled = existing.Settled
+	bill.SettledAt = existing.SettledAt
+	bill.LoyaltyPointsProcessed = existing.LoyaltyPointsProcessed
+	bill.LoyaltyPointsEarned = existing.LoyaltyPointsEarned
+	bill.LoyaltyPointsRedeemed = existing.LoyaltyPointsRedeemed
 	if bill.PaymentMethod == "" {
 		bill.PaymentMethod = existing.PaymentMethod
 	}
@@ -196,10 +252,72 @@ func (s *BillWithLineItemsService) update(
 		bill.TableIDs = existing.TableIDs
 	}
 
+	rawPhone := bill.CustomerID
+	if strings.TrimSpace(rawPhone) == "" {
+		rawPhone = existing.CustomerID
+	}
+
+	shouldEarn := req.Settled && !existing.LoyaltyPointsProcessed && strings.TrimSpace(rawPhone) != ""
+	if shouldEarn {
+		userID, phone, balance, resErr := s.resolveCustomer(ctx, rawPhone, now)
+		if resErr != nil {
+			return nil, resErr
+		}
+		earn := PointsEarnedFromDiscountedSubtotal(
+			lineItemsSubtotalPaise(req.LineItems),
+			totals.TotalDiscountInPaise,
+		)
+		bill.CustomerID = phone
+		bill.Settled = true
+		if bill.SettledAt == 0 {
+			bill.SettledAt = now
+		}
+		bill.LoyaltyPointsProcessed = true
+		bill.LoyaltyPointsEarned = earn
+		if err := s.repo.TransactWrite(
+			ctx,
+			bill,
+			userID,
+			0,
+			earn,
+			s.pointsWalletTable,
+			now,
+			false,
+		); err != nil {
+			latest, getErr := s.repo.Get(ctx, id)
+			if getErr == nil && latest != nil && latest.LoyaltyPointsProcessed {
+				return latest, nil
+			}
+			return nil, err
+		}
+		s.notifyWallet(ctx, phone, balance, 0, earn)
+		return bill, nil
+	}
+
+	if req.Settled {
+		bill.Settled = true
+		if bill.SettledAt == 0 {
+			bill.SettledAt = now
+		}
+	}
+
 	if err := s.repo.Put(ctx, bill); err != nil {
 		return nil, err
 	}
 	return bill, nil
+}
+
+func (s *BillWithLineItemsService) notifyWallet(ctx context.Context, phone string, startBalance, redeem, earn int64) {
+	if s.notifier == nil || strings.TrimSpace(phone) == "" {
+		return
+	}
+	afterRedeem := startBalance - redeem
+	if redeem > 0 {
+		s.notifier.NotifyPointsRedeemed(ctx, phone, redeem, afterRedeem)
+	}
+	if earn > 0 {
+		s.notifier.NotifyPointsEarned(ctx, phone, earn, afterRedeem+earn)
+	}
 }
 
 func requestToBill(req UpsertBillWithLineItemsRequest, staffID string, now int64) *BillWithLineItems {

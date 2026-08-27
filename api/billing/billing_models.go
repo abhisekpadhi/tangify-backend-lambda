@@ -153,7 +153,7 @@ type BillWithLineItems struct {
 	SessionID            string         `json:"session_id"`
 	TableIDs             []string       `json:"table_ids"`
 	StaffID              string         `json:"staff_id"`
-	CustomerID           string         `json:"customer_id"` // user id of the customer
+	CustomerID           string         `json:"customer_id"` // canonical 91 + 10-digit phone
 	PaymentMethod        string         `json:"payment_method"` // PaymentMethod*
 	PaymentStatus        string         `json:"payment_status"` // PaymentStatus*
 	CreatedAt            int64          `json:"created_at"`
@@ -165,6 +165,11 @@ type BillWithLineItems struct {
 	TotalDiscountInPaise int64          `json:"total_discount_in_paise"`
 	TotalAmountInPaise   int64          `json:"total_amount_in_paise"`
 	StateKey             string         `json:"state_key"` // unique key for the state of the bill - used to generate the invoice number
+	Settled              bool           `json:"settled,omitempty"`
+	SettledAt            int64          `json:"settled_at,omitempty"`
+	LoyaltyPointsProcessed bool         `json:"loyalty_points_processed,omitempty"`
+	LoyaltyPointsEarned  int64          `json:"loyalty_points_earned,omitempty"`
+	LoyaltyPointsRedeemed int64         `json:"loyalty_points_redeemed,omitempty"`
 }
 
 type UpsertBillWithLineItemsRequest struct {
@@ -179,6 +184,7 @@ type UpsertBillWithLineItemsRequest struct {
 	Taxes         []TaxType      `json:"taxes,omitempty"`
 	PaymentMethod *string        `json:"payment_method,omitempty"`
 	PaymentStatus *string        `json:"payment_status,omitempty"`
+	Settled       bool           `json:"settled,omitempty"`
 }
 
 // --- Read models (assembled in app; not one Dynamo item) ---

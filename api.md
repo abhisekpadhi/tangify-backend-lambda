@@ -622,11 +622,15 @@ curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application
 
 ### `PUT /api/v1/billing/bills/with-line-items`
 
-Create or update a **bill snapshot** with embedded line items (table `tangify_bills_with_line_items`). JWT required.
+Create or update a **bill snapshot** with embedded line items. JWT required.
+
+`X-Tangify-Environment: dev` writes `dev-tangify_bills_with_line_items` + `dev-tangify_points_wallet`; otherwise `tangify_bills_with_line_items` + `tangify_points_wallet`.
 
 **Create** — send `state_key` (no `id`). Idempotent: retries with the same `state_key` return the existing bill without re-deducting points or calling the invoice worker again.
 
-**Update** — send `id` (invoice number from create). Points discount is frozen from create; wallet is not touched.
+**Update** — send `id` (invoice number from create). Points discount is frozen from create; wallet is not debited again.
+
+**Settle / earn** — send `settled: true` (create or update). Awards `floor((subtotal − discounts) / 50)` points once (`loyalty_points_processed`). Same Dynamo transaction as the bill write.
 
 **Request body** — `UpsertBillWithLineItemsRequest`:
 
@@ -635,12 +639,13 @@ Create or update a **bill snapshot** with embedded line items (table `tangify_bi
   "state_key": "sess_abc::checkout",
   "session_id": "sess_abc",
   "table_ids": ["T5"],
-  "customer_id": "user_uuid",
+  "customer_id": "919876543210",
+  "settled": false,
   "line_items": [
     { "name": "Dal", "quantity": 2, "price": 15000 }
   ],
   "discounts": [
-    { "id": "points", "type": "points", "amount": 0 }
+    { "id": "points", "type": "points", "amount": 900 }
   ],
   "taxes": [
     { "id": "gst", "name": "GST", "rate_in_bps": 500, "amount_in_paise": 1500 }
@@ -648,10 +653,11 @@ Create or update a **bill snapshot** with embedded line items (table `tangify_bi
 }
 ```
 
-Points discount rules (this API only):
-- `type: "points"` — caller `amount` is **ignored**; server uses full wallet balance at `customer_id`.
-- 1 point = Rs 25 (`2500` paise).
-- Points are deducted from the wallet **on create only** (DynamoDB transaction).
+Points rules (this API only):
+- `customer_id` is `91` + 10-digit phone (legacy 10-digit / `+91` still match).
+- `type: "points"` — `amount` is paise to redeem (honored, capped by wallet and remaining subtotal). 1 point = Rs 3 (`300` paise).
+- Points cannot stack with other discount types.
+- Wallet debit on **create only**. Earn on **`settled: true`** if not already processed.
 
 **Response** `200` — full `BillWithLineItems` document; `id` is the invoice number.
 
@@ -679,7 +685,7 @@ Response:
 { "sent": true }
 ```
 
-- 4-digit OTP via WhatsApp (Gupshup).
+- 4-digit OTP via WhatsApp template `points_at_counter` (`{{1}}` is the code).
 - Valid 5 minutes; max 1 send per phone per 60 seconds.
 
 #### `POST /api/v1/loyalty/otp/verify`
@@ -700,14 +706,32 @@ Response:
 
 Use `user_id` as `customer_id` on bill checkout. Max 5 failed verify attempts per challenge.
 
+### `GET /api/v1/loyalty/wallet?phone=<91XXXXXXXXXX>`
+
+Staff wallet lookup. **JWT required** (same as bills). Not on the public allowlist.
+
+Creates the customer + empty wallet if missing. Phone is stored as `91` + 10 digits; lookup also matches 10-digit / `+91` / leading `0`.
+
+```json
+{
+  "phone": "919876543210",
+  "user_id": "…",
+  "points_balance": 12
+}
+```
+
+POS should call this via the Next.js `/api/loyalty/wallet` proxy (Clerk + `TANGIFY_BILLING_TOKEN`), not the Function URL.
+
+`X-Tangify-Environment: dev` reads/writes `dev-tangify_points_wallet`; otherwise `tangify_points_wallet`. Same header as bills.
+
 ---
 
 ### Legacy loyalty (JWT)
 
-Policy:
-- Earn `10` points for every `Rs 250` spend (`25000` paise).
-- Redeem only in blocks of `100` points.
-- Discount per `100` points is controlled by env `LOYALTY_DISCOUNT_PER_100_POINTS_PAISE` (default `25000` paise).
+Policy (aligned with snapshot bills):
+- Earn `1` point per `Rs 50` discounted subtotal (`5000` paise).
+- Redeem any whole points. 1 point = Rs 3 (`300` paise).
+- Env `LOYALTY_DISCOUNT_PER_100_POINTS_PAISE` still overrides paise **per point** if set.
 
 ### `POST /api/v1/loyalty/points/add`
 

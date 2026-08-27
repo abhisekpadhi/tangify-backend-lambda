@@ -7,31 +7,34 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
 
-const gupshupMessagesURL = "https://api.gupshup.io/wa/api/v1/msg"
+const (
+	gupshupMessagesURL = "https://api.gupshup.io/wa/api/v1/msg"
+	gupshupTemplateURL = "https://api.gupshup.io/wa/api/v1/template/msg"
+)
 
 func sendGupshupPlaceholderMessage(ctx context.Context, phone string, name string) error {
 	return sendGupshupTextMessage(ctx, phone, fmt.Sprintf("Hi %s, welcome to House of Odia loyalty program. (Template placeholder)", name))
 }
 
 func sendGupshupOTPMessage(ctx context.Context, phone, otp string) error {
-	return sendGupshupTextMessage(ctx, phone, fmt.Sprintf("Your House of Odia OTP is %s. Valid for 5 minutes.", otp))
+	return sendGupshupTemplateMessage(ctx, phone, gupshupWhatsAppTemplates.OTP.ID(), []string{otp})
 }
 
 func sendGupshupTextMessage(ctx context.Context, phone, text string) error {
-	apiKey := strings.TrimSpace(os.Getenv("GUPSHUP_API_KEY"))
-	source := strings.TrimSpace(os.Getenv("GUPSHUP_SOURCE"))
-	if apiKey == "" || source == "" {
-		return fmt.Errorf("GUPSHUP_API_KEY and GUPSHUP_SOURCE are required")
+	account, err := gupshupAccountFromEnv()
+	if err != nil {
+		return err
 	}
 
 	payload := map[string]any{
 		"channel":     "whatsapp",
-		"source":      source,
+		"source":      account.Source,
 		"destination": phone,
 		"message": map[string]any{
 			"type": "text",
@@ -47,7 +50,7 @@ func sendGupshupTextMessage(ctx context.Context, phone, text string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("apikey", apiKey)
+	req.Header.Set("apikey", account.APIKey)
 
 	client := &http.Client{Timeout: 12 * time.Second}
 	resp, err := client.Do(req)
@@ -60,4 +63,91 @@ func sendGupshupTextMessage(ctx context.Context, phone, text string) error {
 		return fmt.Errorf("gupshup status=%d body=%s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+type gupshupLoyaltyNotifier struct{}
+
+func (gupshupLoyaltyNotifier) NotifyPointsRedeemed(ctx context.Context, phone string, points, balance int64) {
+	if err := sendGupshupTemplateMessage(ctx, phone, gupshupWhatsAppTemplates.PointsUsed.ID(), []string{
+		strconv.FormatInt(points, 10),
+		strconv.FormatInt(balance, 10),
+	}); err != nil {
+		fmt.Println("gupshup points_used:", err)
+	}
+}
+
+func (gupshupLoyaltyNotifier) NotifyPointsEarned(ctx context.Context, phone string, points, balance int64) {
+	if err := sendGupshupTemplateMessage(ctx, phone, gupshupWhatsAppTemplates.RewardPoint.ID(), []string{
+		strconv.FormatInt(points, 10),
+		strconv.FormatInt(balance, 10),
+	}); err != nil {
+		fmt.Println("gupshup reward_point:", err)
+	}
+}
+
+func gupshupTemplateForm(source, destination, appName, templateID string, params []string) (url.Values, error) {
+	if params == nil {
+		params = []string{}
+	}
+	templateJSON, err := json.Marshal(map[string]any{
+		"id":     templateID,
+		"params": params,
+	})
+	if err != nil {
+		return nil, err
+	}
+	form := url.Values{}
+	form.Set("channel", "whatsapp")
+	form.Set("source", digitsOnly(source))
+	form.Set("destination", digitsOnly(destination))
+	form.Set("src.name", strings.TrimSpace(appName))
+	form.Set("template", string(templateJSON))
+	return form, nil
+}
+
+func sendGupshupTemplateMessage(ctx context.Context, destination, templateID string, params []string) error {
+	account, err := gupshupAccountFromEnv()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(account.AppName) == "" {
+		return fmt.Errorf("GUPSHUP_APP_NAME is required")
+	}
+	dest := digitsOnly(destination)
+	if dest == "" {
+		return fmt.Errorf("destination phone required")
+	}
+	form, err := gupshupTemplateForm(account.Source, dest, account.AppName, templateID, params)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, gupshupTemplateURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("apikey", account.APIKey)
+
+	client := &http.Client{Timeout: 12 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("gupshup template status=%d body=%s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+func digitsOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

@@ -14,6 +14,7 @@ var (
 	errBillIDRequired              = errors.New("id required for update")
 	ErrBillNotFound                = errors.New("bill not found")
 	errInsufficientPoints          = errors.New("insufficient points balance")
+	errPointsExclusive             = errors.New("points cannot be combined with other discounts")
 )
 
 func lineItemsSubtotal(items []LineItemV0) int64 {
@@ -37,11 +38,50 @@ func sumTaxes(taxes []TaxType) int64 {
 
 func hasPointsDiscount(discounts []DiscountType) bool {
 	for _, d := range discounts {
-		if d.Type == DiscountTypePoints {
+		if d.Type == DiscountTypePoints && d.Amount > 0 {
 			return true
 		}
 	}
 	return false
+}
+
+func hasNonPointsDiscount(discounts []DiscountType) bool {
+	for _, d := range discounts {
+		if d.Type != DiscountTypePoints && d.Amount > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func requestedRedeemPoints(discounts []DiscountType) int64 {
+	var requested int64
+	for _, d := range discounts {
+		if d.Type != DiscountTypePoints || d.Amount <= 0 {
+			continue
+		}
+		pts := int64(0)
+		if PaisePerPoint > 0 {
+			pts = d.Amount / PaisePerPoint
+		}
+		if pts > requested {
+			requested = pts
+		}
+	}
+	return requested
+}
+
+// PointsEarnedFromDiscountedSubtotal is floor((subtotal - discounts) / Rs 50).
+func PointsEarnedFromDiscountedSubtotal(subtotalPaise, discountPaise int64) int64 {
+	base := subtotalPaise - discountPaise
+	if base <= 0 || PaisePerEarnedPoint <= 0 {
+		return 0
+	}
+	return base / PaisePerEarnedPoint
+}
+
+func lineItemsSubtotalPaise(items []LineItemV0) int64 {
+	return lineItemsSubtotal(items)
 }
 
 type computedTotals struct {
@@ -99,27 +139,31 @@ func computeBillTotals(
 		totalDiscount = nonPointsDiscount
 
 		if hasPointsDiscount(discounts) {
+			if hasNonPointsDiscount(discounts) {
+				return computedTotals{}, errPointsExclusive
+			}
 			customerID = strings.TrimSpace(customerID)
 			if customerID == "" {
 				return computedTotals{}, errCustomerIDRequiredForPoints
 			}
-			pointsDiscount := pointsBalance * PaisePerPoint
+			requested := requestedRedeemPoints(discounts)
 			remaining := subtotal - nonPointsDiscount
-			if pointsDiscount > remaining {
-				pointsDiscount = remaining
+			maxByBill := int64(0)
+			if PaisePerPoint > 0 && remaining > 0 {
+				maxByBill = remaining / PaisePerPoint
 			}
-			if pointsDiscount < 0 {
-				pointsDiscount = 0
-			}
-			pointsToRedeem := int64(0)
-			if PaisePerPoint > 0 {
-				pointsToRedeem = pointsDiscount / PaisePerPoint
-			}
+			pointsToRedeem := requested
 			if pointsToRedeem > pointsBalance {
-				return computedTotals{}, errInsufficientPoints
+				pointsToRedeem = pointsBalance
+			}
+			if pointsToRedeem > maxByBill {
+				pointsToRedeem = maxByBill
+			}
+			if pointsToRedeem < 0 {
+				pointsToRedeem = 0
 			}
 			if pointsToRedeem > 0 {
-				pointsDiscount = pointsToRedeem * PaisePerPoint
+				pointsDiscount := pointsToRedeem * PaisePerPoint
 				outDiscounts = append(outDiscounts, DiscountType{
 					ID:          "points",
 					Type:        DiscountTypePoints,

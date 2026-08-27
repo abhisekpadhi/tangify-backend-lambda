@@ -31,13 +31,17 @@ func validRole(r string) bool {
 }
 
 // CreateOrGetCustomer creates a customer user by phone if not present.
+// Name may be empty (defaults to Guest + last 4 digits). Phone is stored as 91XXXXXXXXXX.
 func (s *Service) CreateOrGetCustomer(ctx context.Context, phone, name string, now int64) (*UserPublic, error) {
-	phone = NormalizePhone(phone)
-	name = strings.TrimSpace(name)
-	if phone == "" || name == "" {
-		return nil, fmt.Errorf("phone and name required")
+	canon, err := CanonicalPhone(phone)
+	if err != nil {
+		return nil, err
 	}
-	if existing, err := s.repo.GetUserByPhone(ctx, phone); err != nil {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = DefaultGuestName(canon)
+	}
+	if existing, err := s.findCustomerByPhone(ctx, phone); err != nil {
 		return nil, err
 	} else if existing != nil {
 		p := existing.Public()
@@ -45,7 +49,7 @@ func (s *Service) CreateOrGetCustomer(ctx context.Context, phone, name string, n
 	}
 	u := &User{
 		ID:        uuid.NewString(),
-		Phone:     phone,
+		Phone:     canon,
 		Name:      name,
 		Role:      RoleCustomer,
 		PwSalt:    "",
@@ -58,6 +62,19 @@ func (s *Service) CreateOrGetCustomer(ctx context.Context, phone, name string, n
 	}
 	p := u.Public()
 	return &p, nil
+}
+
+func (s *Service) findCustomerByPhone(ctx context.Context, phone string) (*User, error) {
+	for _, key := range PhoneLookupKeys(phone) {
+		existing, err := s.repo.GetUserByPhone(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			return existing, nil
+		}
+	}
+	return nil, nil
 }
 
 const pwSaltBytes = 16

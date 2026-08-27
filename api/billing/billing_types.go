@@ -75,8 +75,11 @@ const (
 	OrderChannelDelivery = "delivery"
 )
 
-// PaisePerPoint is the redemption value of one loyalty point (Rs 25).
-const PaisePerPoint = int64(2500)
+// PaisePerPoint is the redemption value of one loyalty point (Rs 3).
+const PaisePerPoint = int64(300)
+
+// PaisePerEarnedPoint is spend (after discounts, before tax) required to earn 1 point (Rs 50).
+const PaisePerEarnedPoint = int64(5000)
 
 type DiscountType struct {
 	ID          string `json:"id"`

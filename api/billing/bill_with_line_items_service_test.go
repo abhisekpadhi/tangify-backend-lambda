@@ -32,3 +32,23 @@ func TestBillRepositoryTableSelection(t *testing.T) {
 		t.Fatalf("expected development table, got %q", development.tableName)
 	}
 }
+
+func TestBillServicePointsWalletTableSelection(t *testing.T) {
+	t.Parallel()
+
+	production := NewBillWithLineItemsService(nil, nil, "", nil, "")
+	if production.pointsWalletTable != "tangify_points_wallet" {
+		t.Fatalf("expected production wallet table, got %q", production.pointsWalletTable)
+	}
+
+	development := NewBillWithLineItemsService(
+		nil,
+		nil,
+		"",
+		nil,
+		"dev-tangify_points_wallet",
+	)
+	if development.pointsWalletTable != "dev-tangify_points_wallet" {
+		t.Fatalf("expected development wallet table, got %q", development.pointsWalletTable)
+	}
+}

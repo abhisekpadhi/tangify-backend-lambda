@@ -52,6 +52,24 @@ fi
 if [[ -n "${INVOICE_NUMBER_WORKER_URL_DEV:-}" ]]; then
   vars+=("INVOICE_NUMBER_WORKER_URL_DEV=${INVOICE_NUMBER_WORKER_URL_DEV}")
 fi
+if [[ -n "${GUPSHUP_API_KEY:-}" ]]; then
+  vars+=("GUPSHUP_API_KEY=${GUPSHUP_API_KEY}")
+fi
+if [[ -n "${GUPSHUP_SOURCE:-}" ]]; then
+  vars+=("GUPSHUP_SOURCE=${GUPSHUP_SOURCE}")
+fi
+if [[ -n "${GUPSHUP_APP_NAME:-}" ]]; then
+  vars+=("GUPSHUP_APP_NAME=${GUPSHUP_APP_NAME}")
+fi
+if [[ -n "${GUPSHUP_REWARD_POINT_TEMPLATE_ID:-}" ]]; then
+  vars+=("GUPSHUP_REWARD_POINT_TEMPLATE_ID=${GUPSHUP_REWARD_POINT_TEMPLATE_ID}")
+fi
+if [[ -n "${GUPSHUP_POINTS_USED_TEMPLATE_ID:-}" ]]; then
+  vars+=("GUPSHUP_POINTS_USED_TEMPLATE_ID=${GUPSHUP_POINTS_USED_TEMPLATE_ID}")
+fi
+if [[ -n "${GUPSHUP_OTP_TEMPLATE_ID:-}" ]]; then
+  vars+=("GUPSHUP_OTP_TEMPLATE_ID=${GUPSHUP_OTP_TEMPLATE_ID}")
+fi
 
 joined=$(IFS=, ; echo "${vars[*]}")
 
