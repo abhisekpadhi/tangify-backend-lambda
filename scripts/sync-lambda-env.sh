@@ -46,6 +46,12 @@ fi
 if [[ -n "${ABLY_KEY:-}" ]]; then
   vars+=("ABLY_KEY=${ABLY_KEY}")
 fi
+if [[ -n "${ABLY_CHANNEL:-}" ]]; then
+  vars+=("ABLY_CHANNEL=${ABLY_CHANNEL}")
+fi
+if [[ -n "${ABLY_CHANNEL_DEV:-}" ]]; then
+  vars+=("ABLY_CHANNEL_DEV=${ABLY_CHANNEL_DEV}")
+fi
 if [[ -n "${INVOICE_NUMBER_WORKER_URL_PROD:-}" ]]; then
   vars+=("INVOICE_NUMBER_WORKER_URL_PROD=${INVOICE_NUMBER_WORKER_URL_PROD}")
 fi

@@ -196,7 +196,7 @@ func handleGupshupInbound(
 		log.Println("gupshup inbound: Ably disabled, skip publish")
 		return nil
 	}
-	if err := ably.PublishJSON(ctx, orderOpsChannel(), "loyalty:wa-link", payload); err != nil {
+	if err := ably.PublishLoyaltyWaLink(ctx, payload); err != nil {
 		return err
 	}
 	log.Printf("gupshup inbound: loyalty:wa-link session=%s phone=%s balance=%d", sessionID, phone10, view.PointsBalance)

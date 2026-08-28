@@ -54,3 +54,26 @@ func orderOpsChannel() string {
 	}
 	return "order_ops"
 }
+
+// loyaltyWaLinkChannels: prod channel always; optional ABLY_CHANNEL_DEV for local dev POS.
+func loyaltyWaLinkChannels() []string {
+	primary := orderOpsChannel()
+	out := []string{primary}
+	if dev := strings.TrimSpace(os.Getenv("ABLY_CHANNEL_DEV")); dev != "" && dev != primary {
+		out = append(out, dev)
+	}
+	return out
+}
+
+func (a *AblyUtils) PublishLoyaltyWaLink(ctx context.Context, payload any) error {
+	if a == nil || !a.enabled {
+		return nil
+	}
+	var firstErr error
+	for _, ch := range loyaltyWaLinkChannels() {
+		if err := a.PublishJSON(ctx, ch, "loyalty:wa-link", payload); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
