@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -67,21 +66,23 @@ func sendGupshupTextMessage(ctx context.Context, phone, text string) error {
 
 type gupshupLoyaltyNotifier struct{}
 
-func (gupshupLoyaltyNotifier) NotifyPointsRedeemed(ctx context.Context, phone string, points, balance int64) {
-	if err := sendGupshupTemplateMessage(ctx, phone, gupshupWhatsAppTemplates.PointsUsed.ID(), []string{
-		strconv.FormatInt(points, 10),
-		strconv.FormatInt(balance, 10),
-	}); err != nil {
-		fmt.Println("gupshup points_used:", err)
+func (gupshupLoyaltyNotifier) NotifyWalletSummary(ctx context.Context, phone string, redeem, earn, balance int64) {
+	if strings.TrimSpace(phone) == "" {
+		return
 	}
-}
-
-func (gupshupLoyaltyNotifier) NotifyPointsEarned(ctx context.Context, phone string, points, balance int64) {
-	if err := sendGupshupTemplateMessage(ctx, phone, gupshupWhatsAppTemplates.RewardPoint.ID(), []string{
-		strconv.FormatInt(points, 10),
-		strconv.FormatInt(balance, 10),
-	}); err != nil {
-		fmt.Println("gupshup reward_point:", err)
+	var parts []string
+	if redeem > 0 {
+		parts = append(parts, fmt.Sprintf("Used %d points", redeem))
+	}
+	if earn > 0 {
+		parts = append(parts, fmt.Sprintf("earned %d points", earn))
+	}
+	if len(parts) == 0 {
+		return
+	}
+	msg := fmt.Sprintf("House of Odia: %s. Balance: %d points.", strings.Join(parts, ", "), balance)
+	if err := sendGupshupTextMessage(ctx, phone, msg); err != nil {
+		fmt.Println("gupshup session text:", err)
 	}
 }
 

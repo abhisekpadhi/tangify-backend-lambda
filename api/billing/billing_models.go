@@ -177,8 +177,9 @@ type UpsertBillWithLineItemsRequest struct {
 	ID            string         `json:"id,omitempty"`
 	SessionID     string         `json:"session_id,omitempty"`
 	TableIDs      []string       `json:"table_ids,omitempty"`
-	StaffID       string         `json:"staff_id,omitempty"`
-	CustomerID    string         `json:"customer_id,omitempty"`
+	StaffID           string         `json:"staff_id,omitempty"`
+	CustomerID        string         `json:"customer_id,omitempty"`
+	LoyaltyCustomerID string         `json:"loyalty_customer_id,omitempty"`
 	LineItems     []LineItemV0   `json:"line_items"`
 	Discounts     []DiscountType `json:"discounts,omitempty"`
 	Taxes         []TaxType      `json:"taxes,omitempty"`

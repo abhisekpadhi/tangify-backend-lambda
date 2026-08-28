@@ -40,6 +40,7 @@ var whitelistedRoutes = []string{
 	"/api/v1/menu",
 	"/api/v1/health",
 	"/api/v1/reviews/generate",
+	"/api/v1/webhooks/gupshup",
 }
 
 type AppContext struct {
@@ -187,6 +188,15 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 	billRepo := billing.NewRepository(dynamoDBClient)
 	loyaltyRepo := loyalty.NewRepository(dynamoDBClient, pointsWalletTable)
 	loyaltyService := loyalty.NewService(loyaltyRepo, billRepo)
+	walletProvider := loyalty.NewWalletProvider(loyaltyRepo, usersService)
+
+	if method == "POST" && route == "/api/v1/webhooks/gupshup" {
+		if err := handleGupshupInbound(ctx, request.Body, walletProvider, ablyUtils, commonUtils.GetCurrentTimestamp()); err != nil {
+			fmt.Println("gupshup webhook error:", err)
+			return ApiResponse.Error(http.StatusInternalServerError, err.Error()), nil
+		}
+		return ApiResponse.Success(map[string]string{"status": "ok"}), nil
+	}
 
 	if method == "POST" && route == "/api/v1/auth/login" {
 		var body users.LoginRequest
@@ -286,7 +296,6 @@ func handler(ctx context.Context, request events.LambdaFunctionURLRequest) (even
 		dynamoDBClient,
 		billsWithLineItemsTable,
 	)
-	walletProvider := loyalty.NewWalletProvider(loyaltyRepo, usersService)
 	billsWithLineItemsService := billing.NewBillWithLineItemsService(
 		billsWithLineItemsRepo,
 		walletProvider,

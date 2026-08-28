@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ably/ably-go/ably"
 )
@@ -45,4 +46,11 @@ func kitchenChannel(venueID string) string {
 
 func waiterChannel(venueID string) string {
 	return fmt.Sprintf("waiter:%s", venueID)
+}
+
+func orderOpsChannel() string {
+	if ch := strings.TrimSpace(os.Getenv("ABLY_CHANNEL")); ch != "" {
+		return ch
+	}
+	return "order_ops"
 }

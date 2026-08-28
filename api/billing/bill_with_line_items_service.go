@@ -10,8 +10,7 @@ import (
 )
 
 type LoyaltyNotifier interface {
-	NotifyPointsRedeemed(ctx context.Context, phone string, points, balance int64)
-	NotifyPointsEarned(ctx context.Context, phone string, points, balance int64)
+	NotifyWalletSummary(ctx context.Context, phone string, redeem, earn, balance int64)
 }
 
 type BillWithLineItemsService struct {
@@ -114,9 +113,13 @@ func (s *BillWithLineItemsService) create(
 		return existing, nil
 	}
 
-	userID, phone, pointsBalance, err := s.resolveCustomer(ctx, req.CustomerID, now)
+	userID, phone, pointsBalance, err := s.resolveCustomer(ctx, req.LoyaltyCustomerID, now)
 	if err != nil {
 		return nil, err
+	}
+	billCustomerID := strings.TrimSpace(req.CustomerID)
+	if billCustomerID == "" && phone != "" {
+		billCustomerID = phone
 	}
 
 	totals, err := computeBillTotals(
@@ -147,8 +150,8 @@ func (s *BillWithLineItemsService) create(
 	bill.TotalDiscountInPaise = totals.TotalDiscountInPaise
 	bill.TotalTaxInPaise = totals.TotalTaxInPaise
 	bill.TotalAmountInPaise = totals.TotalAmountInPaise
-	if phone != "" {
-		bill.CustomerID = phone
+	if billCustomerID != "" {
+		bill.CustomerID = billCustomerID
 	}
 	if bill.PaymentMethod == "" {
 		bill.PaymentMethod = PaymentMethodCash
@@ -209,11 +212,20 @@ func (s *BillWithLineItemsService) update(
 		return nil, ErrBillNotFound
 	}
 
+	loyaltyPhone := strings.TrimSpace(req.LoyaltyCustomerID)
+	billCustomerID := strings.TrimSpace(req.CustomerID)
+	if billCustomerID == "" {
+		billCustomerID = strings.TrimSpace(existing.CustomerID)
+	}
+	if billCustomerID == "" && loyaltyPhone != "" {
+		billCustomerID = loyaltyPhone
+	}
+
 	totals, err := computeBillTotals(
 		req.LineItems,
 		req.Discounts,
 		req.Taxes,
-		req.CustomerID,
+		loyaltyPhone,
 		0,
 		true,
 		existing.Discounts,
@@ -242,8 +254,8 @@ func (s *BillWithLineItemsService) update(
 	if bill.PaymentStatus == "" {
 		bill.PaymentStatus = existing.PaymentStatus
 	}
-	if bill.CustomerID == "" {
-		bill.CustomerID = existing.CustomerID
+	if billCustomerID != "" {
+		bill.CustomerID = billCustomerID
 	}
 	if bill.SessionID == "" {
 		bill.SessionID = existing.SessionID
@@ -252,14 +264,9 @@ func (s *BillWithLineItemsService) update(
 		bill.TableIDs = existing.TableIDs
 	}
 
-	rawPhone := bill.CustomerID
-	if strings.TrimSpace(rawPhone) == "" {
-		rawPhone = existing.CustomerID
-	}
-
-	shouldEarn := req.Settled && !existing.LoyaltyPointsProcessed && strings.TrimSpace(rawPhone) != ""
+	shouldEarn := req.Settled && !existing.LoyaltyPointsProcessed && loyaltyPhone != ""
 	if shouldEarn {
-		userID, phone, balance, resErr := s.resolveCustomer(ctx, rawPhone, now)
+		userID, phone, balance, resErr := s.resolveCustomer(ctx, loyaltyPhone, now)
 		if resErr != nil {
 			return nil, resErr
 		}
@@ -267,7 +274,6 @@ func (s *BillWithLineItemsService) update(
 			lineItemsSubtotalPaise(req.LineItems),
 			totals.TotalDiscountInPaise,
 		)
-		bill.CustomerID = phone
 		bill.Settled = true
 		if bill.SettledAt == 0 {
 			bill.SettledAt = now
@@ -311,13 +317,11 @@ func (s *BillWithLineItemsService) notifyWallet(ctx context.Context, phone strin
 	if s.notifier == nil || strings.TrimSpace(phone) == "" {
 		return
 	}
-	afterRedeem := startBalance - redeem
-	if redeem > 0 {
-		s.notifier.NotifyPointsRedeemed(ctx, phone, redeem, afterRedeem)
+	if redeem == 0 && earn == 0 {
+		return
 	}
-	if earn > 0 {
-		s.notifier.NotifyPointsEarned(ctx, phone, earn, afterRedeem+earn)
-	}
+	finalBalance := startBalance - redeem + earn
+	s.notifier.NotifyWalletSummary(ctx, phone, redeem, earn, finalBalance)
 }
 
 func requestToBill(req UpsertBillWithLineItemsRequest, staffID string, now int64) *BillWithLineItems {
