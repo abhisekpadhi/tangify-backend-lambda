@@ -44,7 +44,7 @@ if [[ -z "$DEST_RAW" ]]; then
   exit 1
 fi
 
-TEXT="${2:-House of Odia: session test. If you got this, the 24h window is open.}"
+TEXT="${2:-Tangify: session test. If you got this, the 24h window is open.}"
 
 digits="$(printf '%s' "$DEST_RAW" | tr -d '+[:space:]-')"
 if [[ "$digits" =~ ^[0-9]{10}$ ]]; then

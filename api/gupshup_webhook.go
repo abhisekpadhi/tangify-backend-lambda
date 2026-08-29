@@ -192,6 +192,9 @@ func handleGupshupInbound(
 		Phone:         phone10,
 		PointsBalance: view.PointsBalance,
 	}
+	if err := sendLoyaltyBalanceReply(ctx, sender, view.PointsBalance); err != nil {
+		log.Println("gupshup inbound: balance reply:", err)
+	}
 	if ably == nil || !ably.enabled {
 		log.Println("gupshup inbound: Ably disabled, skip publish")
 		return nil
@@ -201,4 +204,16 @@ func handleGupshupInbound(
 	}
 	log.Printf("gupshup inbound: loyalty:wa-link session=%s phone=%s balance=%d", sessionID, phone10, view.PointsBalance)
 	return nil
+}
+
+func loyaltyBalanceReplyText(balance int64) string {
+	return fmt.Sprintf("Your points balance is %d", balance)
+}
+
+func sendLoyaltyBalanceReply(ctx context.Context, destination string, balance int64) error {
+	dest := digitsOnly(destination)
+	if dest == "" {
+		return fmt.Errorf("destination phone required")
+	}
+	return sendGupshupTextMessage(ctx, dest, loyaltyBalanceReplyText(balance))
 }

@@ -72,6 +72,10 @@ func invoiceWorkerBillID(stateKey string) string {
 	return fmt.Sprintf("%s_state_%x", PrefixBill, sum[:16])
 }
 
+func linkedLoyaltyCustomerID(req UpsertBillWithLineItemsRequest) string {
+	return strings.TrimSpace(req.LoyaltyCustomerID)
+}
+
 func (s *BillWithLineItemsService) resolveCustomer(
 	ctx context.Context,
 	raw string,
@@ -113,12 +117,12 @@ func (s *BillWithLineItemsService) create(
 		return existing, nil
 	}
 
-	userID, phone, pointsBalance, err := s.resolveCustomer(ctx, req.LoyaltyCustomerID, now)
+	userID, phone, pointsBalance, err := s.resolveCustomer(ctx, linkedLoyaltyCustomerID(req), now)
 	if err != nil {
 		return nil, err
 	}
 	billCustomerID := strings.TrimSpace(req.CustomerID)
-	if billCustomerID == "" && phone != "" {
+	if billCustomerID == "" && linkedLoyaltyCustomerID(req) != "" && phone != "" {
 		billCustomerID = phone
 	}
 
@@ -162,7 +166,7 @@ func (s *BillWithLineItemsService) create(
 
 	redeem := totals.PointsRedeemed
 	var earn int64
-	if req.Settled && phone != "" {
+	if req.Settled && linkedLoyaltyCustomerID(req) != "" && phone != "" {
 		earn = PointsEarnedFromDiscountedSubtotal(
 			lineItemsSubtotalPaise(req.LineItems),
 			totals.TotalDiscountInPaise,
@@ -212,7 +216,7 @@ func (s *BillWithLineItemsService) update(
 		return nil, ErrBillNotFound
 	}
 
-	loyaltyPhone := strings.TrimSpace(req.LoyaltyCustomerID)
+	loyaltyPhone := linkedLoyaltyCustomerID(req)
 	billCustomerID := strings.TrimSpace(req.CustomerID)
 	if billCustomerID == "" {
 		billCustomerID = strings.TrimSpace(existing.CustomerID)

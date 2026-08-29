@@ -2,6 +2,13 @@ package main
 
 import "testing"
 
+func TestLoyaltyBalanceReplyText(t *testing.T) {
+	t.Parallel()
+	if got := loyaltyBalanceReplyText(42); got != "Your points balance is 42" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestParseLoyaltySessionID(t *testing.T) {
 	text := "I want to redeem points for tangify order. order: order-session:ord-1735123456789-k7x9abc"
 	got := parseLoyaltySessionID(text)

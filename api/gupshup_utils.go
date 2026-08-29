@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,7 +17,7 @@ const (
 )
 
 func sendGupshupPlaceholderMessage(ctx context.Context, phone string, name string) error {
-	return sendGupshupTextMessage(ctx, phone, fmt.Sprintf("Hi %s, welcome to House of Odia loyalty program. (Template placeholder)", name))
+	return sendGupshupTextMessage(ctx, phone, fmt.Sprintf("Hi %s, welcome to Tangify loyalty program. (Template placeholder)", name))
 }
 
 func sendGupshupOTPMessage(ctx context.Context, phone, otp string) error {
@@ -30,25 +29,23 @@ func sendGupshupTextMessage(ctx context.Context, phone, text string) error {
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(account.AppName) == "" {
+		return fmt.Errorf("GUPSHUP_APP_NAME is required")
+	}
+	dest := gupshupDestinationDigits(phone)
+	if dest == "" {
+		return fmt.Errorf("destination phone required")
+	}
+	form, err := gupshupTextMessageForm(account.Source, dest, account.AppName, text)
+	if err != nil {
+		return err
+	}
 
-	payload := map[string]any{
-		"channel":     "whatsapp",
-		"source":      account.Source,
-		"destination": phone,
-		"message": map[string]any{
-			"type": "text",
-			"text": text,
-		},
-	}
-	b, err := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, gupshupMessagesURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, gupshupMessagesURL, bytes.NewReader(b))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("apikey", account.APIKey)
 
 	client := &http.Client{Timeout: 12 * time.Second}
@@ -62,6 +59,31 @@ func sendGupshupTextMessage(ctx context.Context, phone, text string) error {
 		return fmt.Errorf("gupshup status=%d body=%s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+func gupshupTextMessageForm(source, destination, appName, text string) (url.Values, error) {
+	messageJSON, err := json.Marshal(map[string]string{
+		"type": "text",
+		"text": text,
+	})
+	if err != nil {
+		return nil, err
+	}
+	form := url.Values{}
+	form.Set("channel", "whatsapp")
+	form.Set("source", digitsOnly(source))
+	form.Set("destination", gupshupDestinationDigits(destination))
+	form.Set("src.name", strings.TrimSpace(appName))
+	form.Set("message", string(messageJSON))
+	return form, nil
+}
+
+func gupshupDestinationDigits(raw string) string {
+	dest := digitsOnly(raw)
+	if len(dest) == 10 {
+		return "91" + dest
+	}
+	return dest
 }
 
 type gupshupLoyaltyNotifier struct{}
@@ -80,7 +102,7 @@ func (gupshupLoyaltyNotifier) NotifyWalletSummary(ctx context.Context, phone str
 	if len(parts) == 0 {
 		return
 	}
-	msg := fmt.Sprintf("House of Odia: %s. Balance: %d points.", strings.Join(parts, ", "), balance)
+	msg := fmt.Sprintf("Tangify: %s. Balance: %d points.", strings.Join(parts, ", "), balance)
 	if err := sendGupshupTextMessage(ctx, phone, msg); err != nil {
 		fmt.Println("gupshup session text:", err)
 	}

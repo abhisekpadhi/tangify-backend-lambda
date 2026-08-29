@@ -132,32 +132,24 @@ func (r *BillWithLineItemsRepository) TransactWrite(
 		if walletUserID == "" {
 			return fmt.Errorf("wallet user id required when moving points")
 		}
-		updateExpr := "SET points_balance = points_balance - :redeem + :earn, updated_at = :now"
-		if pointsToRedeem > 0 {
-			updateExpr += ", lifetime_redeemed = if_not_exists(lifetime_redeemed, :zero) + :redeem"
-		}
-		if pointsToEarn > 0 {
-			updateExpr += ", lifetime_earned = if_not_exists(lifetime_earned, :zero) + :earn"
-		}
+		updateExpr, walletValues := walletPointsUpdateValues(pointsToRedeem, pointsToEarn, walletUserID, now)
 		condWallet := "attribute_exists(user_id)"
 		if pointsToRedeem > 0 {
 			condWallet += " AND points_balance >= :redeem"
 		}
-		txItems = append(txItems, types.TransactWriteItem{
-			Update: &types.Update{
-				TableName: aws.String(walletTableName),
-				Key: map[string]types.AttributeValue{
-					"user_id": &types.AttributeValueMemberS{Value: walletUserID},
-				},
-				UpdateExpression:    aws.String(updateExpr),
-				ConditionExpression: aws.String(condWallet),
-				ExpressionAttributeValues: map[string]types.AttributeValue{
-					":redeem": &types.AttributeValueMemberN{Value: strconv.FormatInt(pointsToRedeem, 10)},
-					":earn":   &types.AttributeValueMemberN{Value: strconv.FormatInt(pointsToEarn, 10)},
-					":zero":   &types.AttributeValueMemberN{Value: "0"},
-					":now":    &types.AttributeValueMemberN{Value: strconv.FormatInt(now, 10)},
-				},
+		walletUpdate := &types.Update{
+			TableName: aws.String(walletTableName),
+			Key: map[string]types.AttributeValue{
+				"user_id": &types.AttributeValueMemberS{Value: walletUserID},
 			},
+			UpdateExpression:          aws.String(updateExpr),
+			ExpressionAttributeValues: walletValues,
+		}
+		if condWallet != "" {
+			walletUpdate.ConditionExpression = aws.String(condWallet)
+		}
+		txItems = append(txItems, types.TransactWriteItem{
+			Update: walletUpdate,
 		})
 	}
 
@@ -165,6 +157,43 @@ func (r *BillWithLineItemsRepository) TransactWrite(
 		TransactItems: txItems,
 	})
 	return err
+}
+
+func walletPointsUpdateExpression(pointsToRedeem, pointsToEarn int64) string {
+	expr, _ := walletPointsUpdateValues(pointsToRedeem, pointsToEarn, "", 0)
+	return expr
+}
+
+func walletPointsUpdateValues(
+	pointsToRedeem, pointsToEarn int64,
+	_ string,
+	now int64,
+) (string, map[string]types.AttributeValue) {
+	if pointsToRedeem <= 0 && pointsToEarn <= 0 {
+		return "", nil
+	}
+	// DynamoDB SET paths allow one additive operand (e.g. + :val), not "+ :earn - :redeem".
+	net := pointsToEarn - pointsToRedeem
+	expr := "SET points_balance = if_not_exists(points_balance, :zero) + :net, updated_at = :now"
+	if pointsToRedeem > 0 {
+		expr += ", lifetime_redeemed = if_not_exists(lifetime_redeemed, :zero) + :redeem"
+	}
+	if pointsToEarn > 0 {
+		expr += ", lifetime_earned = if_not_exists(lifetime_earned, :zero) + :earn"
+	}
+
+	values := map[string]types.AttributeValue{
+		":zero": &types.AttributeValueMemberN{Value: "0"},
+		":now":  &types.AttributeValueMemberN{Value: strconv.FormatInt(now, 10)},
+		":net":  &types.AttributeValueMemberN{Value: strconv.FormatInt(net, 10)},
+	}
+	if pointsToRedeem > 0 {
+		values[":redeem"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(pointsToRedeem, 10)}
+	}
+	if pointsToEarn > 0 {
+		values[":earn"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(pointsToEarn, 10)}
+	}
+	return expr, values
 }
 
 func (r *BillWithLineItemsRepository) TransactCreate(

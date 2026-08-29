@@ -5,6 +5,42 @@ import (
 	"testing"
 )
 
+func TestGupshupTextMessageFormMatchesSessionScript(t *testing.T) {
+	t.Parallel()
+
+	form, err := gupshupTextMessageForm(
+		"917855074030",
+		"9439831236",
+		"HouseOfOdia",
+		"Your points balance is 42",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := form.Get("channel"); got != "whatsapp" {
+		t.Fatalf("channel: got %q", got)
+	}
+	if got := form.Get("source"); got != "917855074030" {
+		t.Fatalf("source: got %q", got)
+	}
+	if got := form.Get("destination"); got != "919439831236" {
+		t.Fatalf("destination: got %q", got)
+	}
+	if got := form.Get("src.name"); got != "HouseOfOdia" {
+		t.Fatalf("src.name: got %q", got)
+	}
+	var message struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(form.Get("message")), &message); err != nil {
+		t.Fatalf("message json: %v", err)
+	}
+	if message.Type != "text" || message.Text != "Your points balance is 42" {
+		t.Fatalf("message: got %#v", message)
+	}
+}
+
 func TestGupshupTemplateFormMatchesDashboardCurl(t *testing.T) {
 	t.Parallel()
 

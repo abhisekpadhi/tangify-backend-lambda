@@ -2,7 +2,7 @@
 # Send an SMS via SMS Gate cloud (https://docs.sms-gate.app).
 # Usage:
 #   ./send.sh 9876543210
-#   ./send.sh 919876543210 "House of Odia: you used 12 points. Balance 40."
+#   ./send.sh 919876543210 "Tangify: you used 12 points. Balance 40."
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -36,7 +36,7 @@ if [[ -z "$DEST_RAW" ]]; then
 fi
 
 shift || true
-MESSAGE="${*:-House of Odia test: you used 12 points and earned 8. Balance 40.}"
+MESSAGE="${*:-Tangify test: you used 12 points and earned 8. Balance 40.}"
 
 digits="$(printf '%s' "$DEST_RAW" | tr -d '+[:space:]-')"
 if [[ "$digits" =~ ^[0-9]{10}$ ]]; then
